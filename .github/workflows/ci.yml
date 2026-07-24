@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "stabilize-**", "feature/**", "fix/**", "refactor/**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Check formatting
+        run: test -z "$(gofmt -l *.go)"
+      - name: Public repository audit
+        run: python3 scripts/check_public_repo.py
+      - name: Unit tests
+        run: go test ./...
+      - name: Race detector
+        run: go test -race ./...
+
+  windows-build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Windows vet
+        shell: pwsh
+        run: go vet -unsafeptr=false ./...
+      - name: Build and package
+        shell: pwsh
+        run: .\scripts\package.ps1 -Version 8.2.0
+      - name: Upload portable package
+        uses: actions/upload-artifact@v7
+        with:
+          name: MouseButtonMapper-windows-x64
+          path: dist/MouseButtonMapper-v8.2.0-windows-x64.zip
+          if-no-files-found: error
+          retention-days: 30
