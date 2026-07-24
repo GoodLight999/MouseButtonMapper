@@ -15,7 +15,7 @@ Windows上で、多ボタンマウスの入力組み合わせをキー操作へ�
 
 ## 2. 現在の基準版
 
-- Version: `8.2.0`
+- Version: `8.3.0`
 - Architecture: Go / Win32 low-level hooks / localhost Web UI / Edge app window
 - Target: Windows x64
 - Entry point: `main.go`
@@ -42,6 +42,10 @@ Windows上で、多ボタンマウスの入力組み合わせをキー操作へ�
 - 設定画面を前面に出しても、直前の外部アプリを判定対象として維持すること。
 - 右クリックなど通常のマウス操作を失わせないこと。
 - 緊急停止手段を常に残すこと。
+- 同じ入力で短押しと長押しを分岐できること。
+- 長押し時は別の実行内容を1回だけ発動するか、短押し時の実行をキャンセルできること。
+- 長押ししきい値は100〜5000msで設定できること。
+- 長押しタイマー待機や`SendInput`をフックコールバックへ入れないこと。
 
 ## 4. 入力コアの重要設計
 
@@ -59,6 +63,15 @@ Windows上で、多ボタンマウスの入力組み合わせをキー操作へ�
 - 設定書き込みは`configSaveCh`経由でワーカーが行います。
 - 更新時はバックアップと一時ファイルを用います。
 - 設定スキーマを変更する際は旧設定の読込互換性を維持します。
+
+### 長押し
+
+- 設定フィールドは`LongPressEnabled`、`LongPressMs`、`LongPressAction`、`LongPressOutput`です。旧設定には存在しないため、すべて後方互換のoptionalフィールドです。
+- `LongPressAction`は`Execute`または`Cancel`です。
+- しきい値到達時の処理は`longpress_windows.go`に隔離されています。
+- タイマーとUPの競合時に二重発火しないこと、短押し・長押し・キャンセルの境界をWindowsテストで確認します。
+- 終了開始後は`shuttingDown`により新しい出力を拒否し、出力ワーカーは`shutdownCh`で停止します。長押しタイマーとの競合を避けるため`actionCh`はcloseしません。
+- X1/X2または修飾キー以外のキーボードキーだけを対象とします。左・右・中クリックは対象外です。
 
 ### 自動プロファイル切替
 
@@ -83,7 +96,10 @@ GUIはEXE内に埋め込んだHTML/CSS/JavaScriptを、localhostのランダム�
 - `main.go`: Windowsアプリ本体。フック、出力、設定、HTTP API、トレイ、Win32処理。
 - `autoswitch_logic.go`: OS非依存の自動切替判定。
 - `autoswitch_logic_test.go`: 自動切替の単体テスト。
-- `web_assets.go`: 埋め込みWeb GUIと既定設定。元のv8.2.0から内容を変更せず分離。
+- `web_assets.go`: 埋め込みWeb GUIと既定設定。
+- `longpress_logic.go`: OS非依存のしきい値・設定正規化。
+- `longpress_windows.go`: Windows入力状態と長押しタイマーの統合。
+- `longpress_logic_test.go` / `longpress_windows_test.go`: 境界・実行・キャンセルの試験。
 - `web_assets_test.go`: JSON妥当性、必須GUI要素、重複ID検査。
 - `version.go`: バージョン定数。
 - `rsrc_amd64.syso`: Windowsアイコンリソース。
@@ -115,5 +131,7 @@ GUIはEXE内に埋め込んだHTML/CSS/JavaScriptを、localhostのランダム�
 - 終了方法のない記録モードを作らない。
 - 意味の曖昧な「保存」「適用」「基本設定」ボタンを増やさない。
 - 設定を守る目的で入力イベントをキューに長時間滞留させない。
+- 長押しを実装するためにフックコールバックを`Sleep`させない。
+- タイマーとUPの双方から長押し出力を二重実行しない。
 - フック内でログファイル書込、設定保存、長時間ロック待ちを行わない。
 - 実機未検証の状態を「完全修正」と断定しない。

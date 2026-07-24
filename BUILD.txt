@@ -1,4 +1,4 @@
-MouseButtonMapper Go v8.2.0
+MouseButtonMapper Go v8.3.0
 
 Canonical build and release documentation:
 - README.md
