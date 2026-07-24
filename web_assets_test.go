@@ -29,6 +29,11 @@ func TestWebUIRequiredControlsExistOnce(t *testing.T) {
 		"saveRule",
 		"recordInput",
 		"recordOutput",
+		"ruleLongEnabled",
+		"ruleLongMs",
+		"ruleLongAction",
+		"ruleLongOutput",
+		"recordLongOutput",
 	}
 	for _, id := range required {
 		needle := `id="` + id + `"`

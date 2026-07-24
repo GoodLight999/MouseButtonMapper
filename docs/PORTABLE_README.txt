@@ -10,3 +10,5 @@ MouseButtonMapper portable edition
 
 旧インストール方式だけを消し、設定を残す場合:
 Remove_Legacy_Install_Keep_Config.cmd
+
+長押し設定は、割り当て編集欄の「この割り当てで長押し判定を使う」から設定します。

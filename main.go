@@ -550,12 +550,16 @@ type Profile struct {
 	Rules []Rule `json:"Rules"`
 }
 type Rule struct {
-	Enabled         bool   `json:"Enabled"`
-	Input           []Item `json:"Input"`
-	Mode            string `json:"Mode"`
-	Output          []Item `json:"Output"`
-	SuppressTrigger bool   `json:"SuppressTrigger"`
-	SuppressPrefix  bool   `json:"SuppressPrefix"`
+	Enabled          bool   `json:"Enabled"`
+	Input            []Item `json:"Input"`
+	Mode             string `json:"Mode"`
+	Output           []Item `json:"Output"`
+	SuppressTrigger  bool   `json:"SuppressTrigger"`
+	SuppressPrefix   bool   `json:"SuppressPrefix"`
+	LongPressEnabled bool   `json:"LongPressEnabled,omitempty"`
+	LongPressMs      int    `json:"LongPressMs,omitempty"`
+	LongPressAction  string `json:"LongPressAction,omitempty"`
+	LongPressOutput  []Item `json:"LongPressOutput,omitempty"`
 }
 type Item struct {
 	Kind string `json:"Kind"`
@@ -587,6 +591,8 @@ type App struct {
 	pendingTap     map[string]bool
 	consumedPrefix map[string]bool
 	suppressedDown map[string]bool
+	longPress      map[string]*longPressState
+	longPressSeq   uint64
 
 	sendMu                  sync.Mutex
 	hookMu                  sync.RWMutex
@@ -604,6 +610,7 @@ type App struct {
 	hookReinstallCount      atomic.Uint64
 	outputDropped           atomic.Uint64
 	rehookPending           atomic.Bool
+	shuttingDown            atomic.Bool
 	hwnd                    uintptr
 	ctrlList                uintptr
 	ctrlStatus              uintptr
@@ -700,7 +707,7 @@ type App struct {
 	autoBlockedSince        time.Time
 }
 
-var app = &App{enabled: true, foregroundMonitorStatus: "起動準備中", mouseDown: map[string]bool{}, mouseDownAt: map[string]time.Time{}, keyDown: map[uint32]bool{}, pendingTap: map[string]bool{}, consumedPrefix: map[string]bool{}, suppressedDown: map[string]bool{}, logCh: make(chan string, 4096), recordHeld: map[string]bool{}, recordingRuleIndex: -1, actionCh: make(chan outputJob, 8192), configSaveCh: make(chan []byte, 8), shutdownCh: make(chan struct{}), hookReady: make(chan struct{}), hookDone: make(chan struct{}), foregroundEventCh: make(chan uintptr, 32)}
+var app = &App{enabled: true, foregroundMonitorStatus: "起動準備中", mouseDown: map[string]bool{}, mouseDownAt: map[string]time.Time{}, keyDown: map[uint32]bool{}, pendingTap: map[string]bool{}, consumedPrefix: map[string]bool{}, suppressedDown: map[string]bool{}, longPress: map[string]*longPressState{}, logCh: make(chan string, 4096), recordHeld: map[string]bool{}, recordingRuleIndex: -1, actionCh: make(chan outputJob, 8192), configSaveCh: make(chan []byte, 8), shutdownCh: make(chan struct{}), hookReady: make(chan struct{}), hookDone: make(chan struct{}), foregroundEventCh: make(chan uintptr, 32)}
 
 func main() {
 	if hasCommandLineFlag("--self-test", "/self-test") {
@@ -772,8 +779,12 @@ func runSelfTest() error {
 	if len(cfg.Profiles) == 0 || strings.TrimSpace(cfg.ActiveProfileId) == "" {
 		return fmt.Errorf("embedded default config has no usable profile")
 	}
-	if strings.TrimSpace(webHTML) == "" || !strings.Contains(webHTML, `id="autoEnabled"`) || !strings.Contains(webHTML, `id="ruleRows"`) {
+	if strings.TrimSpace(webHTML) == "" || !strings.Contains(webHTML, `id="autoEnabled"`) || !strings.Contains(webHTML, `id="ruleRows"`) || !strings.Contains(webHTML, `id="ruleLongEnabled"`) || !strings.Contains(webHTML, `id="recordLongOutput"`) {
 		return fmt.Errorf("embedded web UI is incomplete")
+	}
+	probeRule := Rule{Enabled: true, Input: []Item{{Kind: "Mouse", Code: "X1"}}, Mode: "Tap", LongPressEnabled: true, LongPressMs: 500, LongPressAction: longPressActionCancel, Output: []Item{{Kind: "Key", Code: "65"}}}
+	if err := validateLongPressRule(probeRule); err != nil {
+		return fmt.Errorf("long press rule self-test failed: %w", err)
 	}
 	probe := AppBinding{Enabled: true, ProfileId: cfg.ActiveProfileId, ProcessName: "selftest.exe"}
 	if !bindingMatches(probe, ForegroundAppInfo{ProcessName: "selftest"}) {
@@ -1279,11 +1290,21 @@ func (a *App) evaluateForegroundApp(observed ForegroundAppInfo) {
 
 func (a *App) outputWorker() {
 	defer a.workerWG.Done()
-	for job := range a.actionCh {
-		if delay := time.Since(job.QueuedAt); delay > 100*time.Millisecond {
-			a.logf("output queue delay: %s input=%s output=%s", delay.Round(time.Millisecond), itemsText(job.Rule.Input), itemsText(job.Rule.Output))
+	for {
+		select {
+		case <-a.shutdownCh:
+			return
+		default:
 		}
-		a.sendRule(job.Rule)
+		select {
+		case <-a.shutdownCh:
+			return
+		case job := <-a.actionCh:
+			if delay := time.Since(job.QueuedAt); delay > 100*time.Millisecond {
+				a.logf("output queue delay: %s input=%s output=%s", delay.Round(time.Millisecond), itemsText(job.Rule.Input), itemsText(job.Rule.Output))
+			}
+			a.sendRule(job.Rule)
+		}
 	}
 }
 
@@ -1324,10 +1345,14 @@ func (a *App) configWriter() {
 func cloneRule(r Rule) Rule {
 	r.Input = append([]Item(nil), r.Input...)
 	r.Output = append([]Item(nil), r.Output...)
+	r.LongPressOutput = append([]Item(nil), r.LongPressOutput...)
 	return r
 }
 
 func (a *App) enqueueRule(r Rule) bool {
+	if a.shuttingDown.Load() {
+		return false
+	}
 	job := outputJob{Rule: cloneRule(r), QueuedAt: time.Now()}
 	select {
 	case a.actionCh <- job:
@@ -1380,8 +1405,8 @@ func normalizeConfig(cfg Config) Config {
 			cfg.ActiveProfileId = "default"
 		}
 	}
-	if cfg.Version < 8 {
-		cfg.Version = 8
+	if cfg.Version < 9 {
+		cfg.Version = 9
 	}
 	seenProfiles := map[string]bool{}
 	for i := range cfg.Profiles {
@@ -1393,6 +1418,16 @@ func normalizeConfig(cfg Config) Config {
 		cfg.Profiles[i].Id = id
 		if strings.TrimSpace(cfg.Profiles[i].Name) == "" {
 			cfg.Profiles[i].Name = fmt.Sprintf("プロファイル %d", i+1)
+		}
+		for j := range cfg.Profiles[i].Rules {
+			r := &cfg.Profiles[i].Rules[j]
+			if r.LongPressEnabled {
+				r.LongPressMs = normalizeLongPressMs(r.LongPressMs)
+				r.LongPressAction = normalizeLongPressAction(r.LongPressAction)
+				if r.LongPressAction == longPressActionCancel {
+					r.LongPressOutput = nil
+				}
+			}
 		}
 	}
 	if !seenProfiles[cfg.ActiveProfileId] {
@@ -1435,6 +1470,7 @@ func normalizeConfig(cfg Config) Config {
 func (a *App) applyConfig(cfg Config) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	a.abortAllLongPressLocked("configuration reloaded", false)
 	cfg = normalizeConfig(cfg)
 	a.config = cfg
 	a.editorProfileIndex = a.profileIndexByIDLocked(cfg.ActiveProfileId)
@@ -1488,6 +1524,8 @@ func asyncKeyDown(vk uint32) bool {
 func (a *App) reconcilePhysicalStateLocked() {
 	for btn := range a.mouseDown {
 		if !asyncKeyDown(mouseButtonVK(btn)) {
+			a.abortLongPressForTriggerLocked(Item{Kind: "Mouse", Code: btn}, "missed mouse-up repaired")
+			delete(a.longPress, longPressKey(Item{Kind: "Mouse", Code: btn}))
 			delete(a.mouseDown, btn)
 			delete(a.mouseDownAt, btn)
 			delete(a.pendingTap, btn)
@@ -1500,6 +1538,8 @@ func (a *App) reconcilePhysicalStateLocked() {
 			continue
 		}
 		if !asyncKeyDown(vk) {
+			a.abortLongPressForTriggerLocked(Item{Kind: "Key", Code: strconv.Itoa(int(vk))}, "missed key-up repaired")
+			delete(a.longPress, longPressKey(Item{Kind: "Key", Code: strconv.Itoa(int(vk))}))
 			delete(a.keyDown, vk)
 		}
 	}
@@ -1564,9 +1604,13 @@ func (a *App) rebuildRulesLocked() {
 	prof := a.config.Profiles[idx]
 	rules := make([]Rule, 0, len(prof.Rules))
 	for _, r := range prof.Rules {
-		if r.Enabled && strings.EqualFold(r.Mode, "Tap") && len(r.Input) > 0 && len(r.Output) > 0 && !isDangerousSingleReplacement(r) {
-			rules = append(rules, r)
+		if !r.Enabled || !strings.EqualFold(r.Mode, "Tap") || len(r.Input) == 0 || !ruleHasRunnableOutput(r) || isDangerousSingleReplacement(r) {
+			continue
 		}
+		if err := validateLongPressRule(r); err != nil {
+			continue
+		}
+		rules = append(rules, r)
 	}
 	a.rules = rules
 }
@@ -1707,6 +1751,7 @@ func (a *App) reinstallHooksCurrent(reason string) {
 	a.pendingTap = map[string]bool{}
 	a.consumedPrefix = map[string]bool{}
 	a.suppressedDown = map[string]bool{}
+	a.abortAllLongPressLocked("hooks reinstalled", true)
 	if a.recordingMode != "" {
 		a.recordingMode = ""
 		a.recordingRuleIndex = -1
@@ -1829,9 +1874,18 @@ func (a *App) messageLoop() {
 	}
 }
 func (a *App) cleanup() {
+	// タイマーやUI処理が終了処理と競合しても、終了開始後に新しい入力を
+	// 注入しない。actionChは閉じず、shutdownChでワーカーを停止する。
+	// これにより、停止済みタイマーのコールバックが遅れて戻ってきても
+	// closed channelへのsendでpanicしない。
+	a.shuttingDown.Store(true)
+	a.mu.Lock()
+	a.abortAllLongPressLocked("application exit", true)
+	a.mu.Unlock()
+	a.sendMu.Lock()
+	a.sendMu.Unlock()
 	a.stopHookSubsystem()
 	close(a.shutdownCh)
-	close(a.actionCh)
 	close(a.configSaveCh)
 	a.workerWG.Wait()
 	a.removeTray()
@@ -1907,6 +1961,7 @@ func (a *App) handleKeyEvent(vk uint32, isDown bool) bool {
 	}
 	emergency := isDown && vk == VK_F12 && (a.keyDown[VK_CONTROL] || a.keyDown[VK_LCONTROL] || a.keyDown[VK_RCONTROL]) && (a.keyDown[VK_SHIFT] || a.keyDown[VK_LSHIFT] || a.keyDown[VK_RSHIFT]) && (a.keyDown[VK_MENU] || a.keyDown[VK_LMENU] || a.keyDown[VK_RMENU])
 	if emergency {
+		a.abortAllLongPressLocked("emergency stop", false)
 		a.recordingMode = ""
 		a.recordingRuleIndex = -1
 		a.recordingProfileID = ""
@@ -1935,14 +1990,35 @@ func (a *App) handleKeyEvent(vk uint32, isDown bool) bool {
 		}
 		return true
 	}
-	if isDown && !wasDown {
-		a.noteLastInputLocked(it, "押下")
+
+	if !isDown {
+		completion := a.finishLongPressLocked(it)
+		a.mu.Unlock()
+		if completion.HasRule {
+			a.enqueueRuleGuaranteed(completion.Rule)
+		}
+		if completion.Handled {
+			return completion.Suppress
+		}
+		return false
 	}
-	if !isDown || wasDown || !a.enabled || a.emergency {
+
+	if wasDown {
+		suppress := a.longPressSuppressedLocked(it)
+		a.mu.Unlock()
+		return suppress
+	}
+	a.noteLastInputLocked(it, "押下")
+	if !a.enabled || a.emergency {
 		a.mu.Unlock()
 		return false
 	}
-	rule, ok := a.findBestTriggerLocked(Item{Kind: "Key", Code: strconv.Itoa(int(vk))})
+	rule, ok := a.findBestTriggerLocked(it)
+	if ok && rule.LongPressEnabled {
+		started := a.startLongPressLocked(rule, it)
+		a.mu.Unlock()
+		return started && rule.SuppressTrigger
+	}
 	a.mu.Unlock()
 	if ok {
 		if a.enqueueRule(rule) {
@@ -2020,11 +2096,20 @@ func isPrimaryButton(btn string) bool { return btn == "Left" || btn == "Right" |
 func (a *App) buttonDown(btn string) bool {
 	a.mu.Lock()
 	now := time.Now()
+	trigger := Item{Kind: "Mouse", Code: btn}
 	wasDown := a.mouseDown[btn]
 	if wasDown {
 		age := now.Sub(a.mouseDownAt[btn])
-		if age > 2*time.Second {
+		staleAfter := 2 * time.Second
+		if a.longPress[longPressKey(trigger)] != nil {
+			// 長押し中のゲーミングマウスがDOWNを再送しても、正当な押下を
+			// UP欠落と誤認しない。長押し状態がある場合だけ猶予を広げる。
+			staleAfter = 10 * time.Second
+		}
+		if age > staleAfter {
 			// UP欠落後に次のDOWNが来た場合、永久に「押下中」のまま固まらないよう自己修復する。
+			a.abortLongPressForTriggerLocked(trigger, "stale mouse-down recovered")
+			delete(a.longPress, longPressKey(trigger))
 			delete(a.pendingTap, btn)
 			delete(a.consumedPrefix, btn)
 			delete(a.suppressedDown, btn)
@@ -2036,8 +2121,8 @@ func (a *App) buttonDown(btn string) bool {
 	a.mouseDownAt[btn] = now
 	if wasDown {
 		// 一部のゲーミングマウス/ドライバは押しっぱなし中にDOWNを再送する。
-		// Tapルールを重複発火させず、既に抑制中のボタンだけ同じ扱いを続ける。
-		suppress := !isPrimaryButton(btn) && (a.suppressedDown[btn] || a.pendingTap[btn] || a.consumedPrefix[btn])
+		// Tap/長押しルールを重複発火させず、既に抑制中のボタンだけ同じ扱いを続ける。
+		suppress := !isPrimaryButton(btn) && (a.suppressedDown[btn] || a.pendingTap[btn] || a.consumedPrefix[btn] || a.longPressSuppressedLocked(trigger))
 		a.mu.Unlock()
 		return suppress
 	}
@@ -2048,13 +2133,25 @@ func (a *App) buttonDown(btn string) bool {
 		// 左/右/中クリックは、記録ボタンや中止ボタンを押せるように通す。
 		return !isPrimaryButton(btn)
 	}
-	a.noteLastInputLocked(Item{Kind: "Mouse", Code: btn}, "押下")
+	a.noteLastInputLocked(trigger, "押下")
 	if !a.enabled || a.emergency {
 		a.mu.Unlock()
 		return false
 	}
-	if rule, ok := a.findBestTriggerLocked(Item{Kind: "Mouse", Code: btn}); ok && len(rule.Input) > 1 {
+
+	rule, matched := a.findBestTriggerLocked(trigger)
+	if matched && len(rule.Input) > 1 {
 		a.markPrefixesConsumedLocked(rule)
+	}
+	if matched && rule.LongPressEnabled {
+		started := a.startLongPressLocked(rule, trigger)
+		if started && !isPrimaryButton(btn) && rule.SuppressTrigger {
+			a.suppressedDown[btn] = true
+		}
+		a.mu.Unlock()
+		return started && !isPrimaryButton(btn) && rule.SuppressTrigger
+	}
+	if matched && len(rule.Input) > 1 {
 		a.mu.Unlock()
 		queued := a.enqueueRule(rule)
 		if isPrimaryButton(btn) || !queued {
@@ -2062,9 +2159,10 @@ func (a *App) buttonDown(btn string) bool {
 		}
 		return rule.SuppressTrigger
 	}
+
 	suppress := false
 	if !isPrimaryButton(btn) {
-		if rule, ok := a.singleTapRuleLocked(btn); ok && rule.SuppressTrigger {
+		if rule, ok := a.singleTapRuleLocked(btn); ok && !rule.LongPressEnabled && rule.SuppressTrigger {
 			a.pendingTap[btn] = true
 			a.suppressedDown[btn] = true
 			suppress = true
@@ -2077,10 +2175,12 @@ func (a *App) buttonDown(btn string) bool {
 	a.mu.Unlock()
 	return suppress
 }
+
 func (a *App) buttonUp(btn string) bool {
 	a.mu.Lock()
+	trigger := Item{Kind: "Mouse", Code: btn}
 	if a.recordingMode != "" {
-		finish := a.recordUpLocked(Item{Kind: "Mouse", Code: btn}, "離した")
+		finish := a.recordUpLocked(trigger, "離した")
 		delete(a.mouseDown, btn)
 		delete(a.mouseDownAt, btn)
 		a.postActivityRefreshLocked()
@@ -2090,6 +2190,26 @@ func (a *App) buttonUp(btn string) bool {
 		}
 		return !isPrimaryButton(btn)
 	}
+
+	completion := a.finishLongPressLocked(trigger)
+	if completion.Handled {
+		suppressed := a.suppressedDown[btn]
+		consumed := a.consumedPrefix[btn]
+		delete(a.mouseDown, btn)
+		delete(a.mouseDownAt, btn)
+		delete(a.pendingTap, btn)
+		delete(a.consumedPrefix, btn)
+		delete(a.suppressedDown, btn)
+		a.mu.Unlock()
+		if completion.HasRule {
+			a.enqueueRuleGuaranteed(completion.Rule)
+		}
+		if isPrimaryButton(btn) {
+			return false
+		}
+		return completion.Suppress || suppressed || consumed
+	}
+
 	pending := a.pendingTap[btn]
 	consumed := a.consumedPrefix[btn]
 	suppressed := a.suppressedDown[btn]
@@ -2101,11 +2221,8 @@ func (a *App) buttonUp(btn string) bool {
 	delete(a.suppressedDown, btn)
 	active := a.enabled && !a.emergency
 	a.mu.Unlock()
-	if pending && !consumed && single && active {
-		if !a.enqueueRule(rule) {
-			// DOWNを既に抑制している単押しは、キュー飽和時も操作を消失させない。
-			go a.sendRule(cloneRule(rule))
-		}
+	if pending && !consumed && single && active && !rule.LongPressEnabled {
+		a.enqueueRuleGuaranteed(rule)
 	}
 	if isPrimaryButton(btn) {
 		return false
@@ -2165,6 +2282,7 @@ func (a *App) isSuppressPrefixButtonLocked(btn string) bool {
 func (a *App) markPrefixesConsumedLocked(r Rule) {
 	for i := 0; i < len(r.Input)-1; i++ {
 		it := r.Input[i]
+		a.abortLongPressForTriggerLocked(it, "input became a prefix of a longer rule")
 		if strings.EqualFold(it.Kind, "Mouse") {
 			a.consumedPrefix[normMouse(it.Code)] = true
 		}
@@ -2200,10 +2318,14 @@ func (a *App) appendRecordedItemLocked(it Item) {
 	a.recordedItems = append(a.recordedItems, n)
 }
 
+func isOutputRecordingMode(mode string) bool {
+	return mode == "output" || mode == "long-output"
+}
+
 func (a *App) recordMouseDownLocked(btn string) {
 	it := Item{Kind: "Mouse", Code: btn}
 	a.noteLastInputLocked(it, "押下")
-	if a.recordingMode == "output" {
+	if isOutputRecordingMode(a.recordingMode) {
 		return
 	}
 	if a.recordHeld == nil {
@@ -2239,7 +2361,7 @@ func (a *App) appendHeldMousePrefixesLocked() {
 func (a *App) recordDownLocked(it Item, phase string) {
 	// この関数は a.mu を保持した状態で呼ぶ。
 	a.noteLastInputLocked(it, phase)
-	if a.recordingMode == "output" && !strings.EqualFold(it.Kind, "Key") {
+	if isOutputRecordingMode(a.recordingMode) && !strings.EqualFold(it.Kind, "Key") {
 		return
 	}
 	if a.recordingMode == "input" {
@@ -2255,7 +2377,7 @@ func (a *App) recordDownLocked(it Item, phase string) {
 func (a *App) recordUpLocked(it Item, phase string) bool {
 	// この関数は a.mu を保持した状態で呼ぶ。
 	a.noteLastInputLocked(it, phase)
-	if a.recordingMode == "output" && !strings.EqualFold(it.Kind, "Key") {
+	if isOutputRecordingMode(a.recordingMode) && !strings.EqualFold(it.Kind, "Key") {
 		return false
 	}
 	if a.recordHeld != nil {
@@ -2268,7 +2390,7 @@ func (a *App) recordWheelLocked(it Item, phase string) bool {
 	// ホイールは「押下状態」を持たないため、単体なら即完了。
 	// サイドボタン等を押しながら回した場合は、そのボタンを離した時点で完了。
 	a.noteLastInputLocked(it, phase)
-	if a.recordingMode == "output" {
+	if isOutputRecordingMode(a.recordingMode) {
 		return false
 	}
 	a.appendHeldMousePrefixesLocked()
@@ -2475,6 +2597,9 @@ func normalizeModifier(vk uint32) uint32 {
 func (a *App) sendShortcut(keys []uint32) {
 	a.sendMu.Lock()
 	defer a.sendMu.Unlock()
+	if a.shuttingDown.Load() {
+		return
+	}
 	mods := []uint32{}
 	normals := []uint32{}
 	seen := map[uint32]bool{}
@@ -3516,6 +3641,7 @@ func (a *App) handleCommand(id uint32) {
 		a.mu.Lock()
 		if a.enabled && !a.emergency {
 			a.enabled = false
+			a.abortAllLongPressLocked("conversion stopped", false)
 		} else {
 			a.enabled = true
 			a.emergency = false
@@ -3527,6 +3653,7 @@ func (a *App) handleCommand(id uint32) {
 		a.mu.Lock()
 		a.enabled = false
 		a.emergency = true
+		a.abortAllLongPressLocked("emergency stop from UI", false)
 		a.postUIRefreshLocked()
 		a.mu.Unlock()
 		a.ReleaseModifiersNow()
@@ -3675,11 +3802,24 @@ func (a *App) finishRecordingAuto() {
 		return
 	}
 	rules := &a.config.Profiles[profileIdx].Rules
+	updated := cloneRule((*rules)[idx])
 	if mode == "input" {
-		(*rules)[idx].Input = items
+		updated.Input = items
 	} else if mode == "output" {
-		(*rules)[idx].Output = items
+		updated.Output = items
+	} else if mode == "long-output" {
+		updated.LongPressEnabled = true
+		updated.LongPressAction = longPressActionExecute
+		updated.LongPressMs = normalizeLongPressMs(updated.LongPressMs)
+		updated.LongPressOutput = items
 	}
+	if err := validateLongPressRule(updated); err != nil {
+		reset()
+		a.mu.Unlock()
+		messageBox("記録内容を保存できません", err.Error())
+		return
+	}
+	(*rules)[idx] = updated
 	err := a.saveConfigLocked()
 	a.rebuildRulesLocked()
 	reset()
@@ -3690,8 +3830,10 @@ func (a *App) finishRecordingAuto() {
 	}
 	if mode == "input" {
 		setText(a.ctrlMessage, "入力を記録して保存しました: "+itemsText(items))
+	} else if mode == "long-output" {
+		setText(a.ctrlMessage, "長押し時の実行内容を記録して保存しました: "+itemsText(items))
 	} else {
-		setText(a.ctrlMessage, "実行内容を記録して保存しました: "+itemsText(items))
+		setText(a.ctrlMessage, "短押し時の実行内容を記録して保存しました: "+itemsText(items))
 	}
 }
 
@@ -3758,6 +3900,12 @@ func (a *App) saveSelectedRuleFromEditor() {
 		a.mu.Unlock()
 		return
 	}
+	// 旧Win32編集画面には長押し欄がないため、そこで通常項目を保存しても
+	// Web GUIで設定した長押し内容を失わせない。
+	r.LongPressEnabled = (*rules)[idx].LongPressEnabled
+	r.LongPressMs = (*rules)[idx].LongPressMs
+	r.LongPressAction = (*rules)[idx].LongPressAction
+	r.LongPressOutput = append([]Item(nil), (*rules)[idx].LongPressOutput...)
 	(*rules)[idx] = r
 	err = a.saveConfigLocked()
 	a.rebuildRulesLocked()
@@ -3941,7 +4089,7 @@ func (a *App) copyDiagnosticLogToClipboard() error {
 	}
 	if len(a.config.Profiles) > 0 && a.activeProfileIndex < len(a.config.Profiles) {
 		for i, r := range a.config.Profiles[a.activeProfileIndex].Rules {
-			lines = append(lines, fmt.Sprintf("%02d enabled=%v mode=%s suppressLast=%v cancelSideSingle=%v input=%s output=%s", i+1, r.Enabled, r.Mode, r.SuppressTrigger, r.SuppressPrefix, itemsText(r.Input), itemsText(r.Output)))
+			lines = append(lines, fmt.Sprintf("%02d enabled=%v mode=%s suppressLast=%v cancelSideSingle=%v input=%s shortOutput=%s longPress=%v longMs=%d longAction=%s longOutput=%s", i+1, r.Enabled, r.Mode, r.SuppressTrigger, r.SuppressPrefix, itemsText(r.Input), itemsText(r.Output), r.LongPressEnabled, normalizeLongPressMs(r.LongPressMs), normalizeLongPressAction(r.LongPressAction), itemsText(r.LongPressOutput)))
 		}
 	}
 	a.mu.RUnlock()
@@ -4062,8 +4210,8 @@ func (a *App) backupConfig() error {
 func (a *App) saveConfigLocked() error {
 	// フックコールバックと共有するa.muを保持したままディスクI/Oをしない。
 	// ここでは完全なJSONスナップショットだけを作り、専用ワーカーへ渡す。
-	if a.config.Version < 8 {
-		a.config.Version = 8
+	if a.config.Version < 9 {
+		a.config.Version = 9
 	}
 	a.config.SavedBy = appVersion
 	a.config.SavedAt = time.Now().Format(time.RFC3339)
@@ -4152,6 +4300,11 @@ type webRule struct {
 	Input                   string `json:"input"`
 	Mode                    string `json:"mode"`
 	Output                  string `json:"output"`
+	LongPressEnabled        bool   `json:"longPressEnabled"`
+	LongPressMs             int    `json:"longPressMs"`
+	LongPressAction         string `json:"longPressAction"`
+	LongPressOutput         string `json:"longPressOutput"`
+	LongPressSummary        string `json:"longPressSummary"`
 	SuppressTrigger         bool   `json:"suppressTrigger"`
 	SuppressPrefix          bool   `json:"suppressPrefix"`
 	SuppressTriggerEditable bool   `json:"suppressTriggerEditable"`
@@ -4510,6 +4663,11 @@ func (a *App) buildWebState() webState {
 				Input:                   itemsText(r.Input),
 				Mode:                    modeText(r.Mode),
 				Output:                  itemsText(r.Output),
+				LongPressEnabled:        r.LongPressEnabled,
+				LongPressMs:             normalizeLongPressMs(r.LongPressMs),
+				LongPressAction:         normalizeLongPressAction(r.LongPressAction),
+				LongPressOutput:         itemsText(r.LongPressOutput),
+				LongPressSummary:        ruleLongPressSummary(r),
 				SuppressTrigger:         r.SuppressTrigger,
 				SuppressPrefix:          r.SuppressPrefix,
 				SuppressTriggerEditable: !isLastInputPrimaryMouse(r.Input),
@@ -4602,10 +4760,11 @@ func (a *App) webAPIState(w http.ResponseWriter, r *http.Request) {
 }
 
 type actionReq struct {
-	Action string `json:"action"`
-	Index  int    `json:"index"`
-	Mode   string `json:"mode"`
-	Output string `json:"output"`
+	Action     string `json:"action"`
+	Index      int    `json:"index"`
+	Mode       string `json:"mode"`
+	Output     string `json:"output"`
+	LongOutput string `json:"longOutput"`
 }
 
 func (a *App) webAPIAction(w http.ResponseWriter, r *http.Request) {
@@ -4619,6 +4778,7 @@ func (a *App) webAPIAction(w http.ResponseWriter, r *http.Request) {
 		a.mu.Lock()
 		if a.enabled && !a.emergency {
 			a.enabled = false
+			a.abortAllLongPressLocked("conversion stopped", false)
 		} else {
 			a.enabled = true
 			a.emergency = false
@@ -4629,6 +4789,7 @@ func (a *App) webAPIAction(w http.ResponseWriter, r *http.Request) {
 		a.mu.Lock()
 		a.enabled = false
 		a.emergency = true
+		a.abortAllLongPressLocked("emergency stop from web UI", false)
 		a.recordingMode = ""
 		a.recordHeld = map[string]bool{}
 		a.mu.Unlock()
@@ -4659,10 +4820,12 @@ func (a *App) webAPIAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		sendOK("エクスポートしました: " + p)
-	case "record-input", "record-output":
+	case "record-input", "record-output", "record-long-output":
 		mode := "input"
 		if req.Action == "record-output" {
 			mode = "output"
+		} else if req.Action == "record-long-output" {
+			mode = "long-output"
 		}
 		if err := a.startRecordingAt(mode, req.Index); err != nil {
 			writeError(w, err)
@@ -4678,10 +4841,18 @@ func (a *App) webAPIAction(w http.ResponseWriter, r *http.Request) {
 		a.recordHeld = map[string]bool{}
 		a.mu.Unlock()
 		sendOK("記録を中止しました。")
-	case "test-output":
-		items, err := parseItemsText(req.Output, false, true)
+	case "test-output", "test-long-output":
+		text := req.Output
+		if req.Action == "test-long-output" {
+			text = req.LongOutput
+		}
+		items, err := parseItemsText(text, false, true)
 		if err != nil {
 			writeError(w, err)
+			return
+		}
+		if len(items) == 0 {
+			writeError(w, fmt.Errorf("テストする実行内容を入力してください。"))
 			return
 		}
 		keys := []uint32{}
@@ -4708,7 +4879,7 @@ func (a *App) webAPIAction(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) startRecordingAt(mode string, idx int) error {
-	if mode != "input" && mode != "output" {
+	if mode != "input" && mode != "output" && mode != "long-output" {
 		return fmt.Errorf("記録種別が不正です。")
 	}
 	a.mu.Lock()
@@ -4730,16 +4901,20 @@ func (a *App) startRecordingAt(mode string, idx int) error {
 }
 
 type ruleReq struct {
-	Op              string `json:"op"`
-	Index           int    `json:"index"`
-	Target          int    `json:"target"`
-	Delta           int    `json:"delta"`
-	Field           string `json:"field"`
-	Enabled         bool   `json:"enabled"`
-	Input           string `json:"input"`
-	Output          string `json:"output"`
-	SuppressTrigger bool   `json:"suppressTrigger"`
-	SuppressPrefix  bool   `json:"suppressPrefix"`
+	Op               string `json:"op"`
+	Index            int    `json:"index"`
+	Target           int    `json:"target"`
+	Delta            int    `json:"delta"`
+	Field            string `json:"field"`
+	Enabled          bool   `json:"enabled"`
+	Input            string `json:"input"`
+	Output           string `json:"output"`
+	SuppressTrigger  bool   `json:"suppressTrigger"`
+	SuppressPrefix   bool   `json:"suppressPrefix"`
+	LongPressEnabled bool   `json:"longPressEnabled"`
+	LongPressMs      int    `json:"longPressMs"`
+	LongPressAction  string `json:"longPressAction"`
+	LongPressOutput  string `json:"longPressOutput"`
 }
 
 func (a *App) webAPIRule(w http.ResponseWriter, r *http.Request) {
@@ -4818,18 +4993,46 @@ func (a *App) webSaveRule(req ruleReq) error {
 	}
 	output, err := parseItemsText(req.Output, false, true)
 	if err != nil {
-		return fmt.Errorf("実行内容の解釈に失敗: %w", err)
+		return fmt.Errorf("短押し時の実行内容の解釈に失敗: %w", err)
 	}
-	if len(input) == 0 || len(output) == 0 {
-		return fmt.Errorf("入力と実行内容はどちらも1つ以上必要です。")
+	if len(input) == 0 {
+		return fmt.Errorf("入力は1つ以上必要です。")
 	}
-	r := Rule{Enabled: req.Enabled, Input: input, Mode: "Tap", Output: output, SuppressTrigger: req.SuppressTrigger, SuppressPrefix: req.SuppressPrefix}
+
+	action := normalizeLongPressAction(req.LongPressAction)
+	longOutput := []Item(nil)
+	if req.LongPressEnabled && action == longPressActionExecute {
+		longOutput, err = parseItemsText(req.LongPressOutput, false, true)
+		if err != nil {
+			return fmt.Errorf("長押し時の実行内容の解釈に失敗: %w", err)
+		}
+	}
+	if !req.LongPressEnabled && len(output) == 0 {
+		return fmt.Errorf("長押し判定を使わない場合は、実行内容が1つ以上必要です。")
+	}
+
+	r := Rule{
+		Enabled:          req.Enabled,
+		Input:            input,
+		Mode:             "Tap",
+		Output:           output,
+		SuppressTrigger:  req.SuppressTrigger,
+		SuppressPrefix:   req.SuppressPrefix,
+		LongPressEnabled: req.LongPressEnabled,
+		LongPressMs:      normalizeLongPressMs(req.LongPressMs),
+		LongPressAction:  action,
+		LongPressOutput:  longOutput,
+	}
 	if isLastInputPrimaryMouse(r.Input) {
 		r.SuppressTrigger = false
 	}
 	if !hasSidePrefix(r.Input) {
 		r.SuppressPrefix = false
 	}
+	if err := validateLongPressRule(r); err != nil {
+		return err
+	}
+
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	rules := a.editorRulesSliceLocked()
