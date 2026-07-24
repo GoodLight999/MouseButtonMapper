@@ -35,12 +35,15 @@ jobs:
           echo 'd918d51c4b265d17a304ac39e75c8122ec70049c5efdc3d02a57757d262c19da  /tmp/longpress.b64' | sha256sum --check --strict
           base64 --decode /tmp/longpress.b64 > /tmp/longpress.tar.xz
           echo '52849b4c3ea6f7b65a3ec66cdd3027dce93db9b05c9fbfaacf984dac04092775  /tmp/longpress.tar.xz' | sha256sum --check --strict
-          tar -xJf /tmp/longpress.tar.xz -C .
 
-          # The built-in Actions token cannot push newly modified workflow files.
-          # Audited CI and release workflows are installed separately through the
-          # authenticated GitHub connector after the source snapshot is restored.
-          rm -f .github/workflows/ci.yml .github/workflows/release.yml
+          # Preserve the branch's currently registered workflows. The audited
+          # replacements are installed separately with an authenticated connector,
+          # because the built-in Actions token cannot push workflow changes.
+          cp .github/workflows/ci.yml /tmp/ci.yml
+          cp .github/workflows/release.yml /tmp/release.yml
+          tar -xJf /tmp/longpress.tar.xz -C .
+          cp /tmp/ci.yml .github/workflows/ci.yml
+          cp /tmp/release.yml .github/workflows/release.yml
           rm -rf .bootstrap-longpress
 
           git config user.name 'github-actions[bot]'
