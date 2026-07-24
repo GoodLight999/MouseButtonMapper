@@ -23,6 +23,7 @@ jobs:
         with:
           ref: stabilize-v8.2-and-ci
           fetch-depth: 0
+          show-progress: false
 
       - name: Restore audited repository snapshot
         shell: bash
@@ -35,9 +36,14 @@ jobs:
           fi
 
           cat .bootstrap/xpart-000 .bootstrap/xpart-001 .bootstrap/ypart-* > /tmp/repository.b64
+          echo 'daa01c9db47555260391bf6356350f2a590e605334e554e352d21f41ba416f2e  /tmp/repository.b64' | sha256sum --check --strict
           base64 --decode /tmp/repository.b64 > /tmp/repository.tar.xz
           echo '7c162d68d0f38328c968644e35c64f9bfc6ad0f3056bbaa5a1d5a7909f9f3ef8  /tmp/repository.tar.xz' | sha256sum --check --strict
           tar -xJf /tmp/repository.tar.xz -C .
+
+          # GitHub's built-in token may not push newly introduced workflow files.
+          # Those two audited files are installed separately through the GitHub connector.
+          rm -f .github/workflows/ci.yml .github/workflows/release.yml
           rm -rf .bootstrap
 
           git config user.name 'github-actions[bot]'
@@ -49,5 +55,5 @@ jobs:
             exit 0
           fi
 
-          git commit -m 'Import audited v8.2.0 source, CI, and handoff documentation'
+          git commit -m 'Import audited v8.2.0 source and handoff documentation'
           git push origin HEAD:stabilize-v8.2-and-ci
