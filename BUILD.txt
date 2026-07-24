@@ -1,0 +1,13 @@
+MouseButtonMapper Go v8.2.0
+
+Canonical build and release documentation:
+- README.md
+- CONTRIBUTING.md
+- docs/HANDOFF.md
+- docs/RELEASE.md
+
+Quick Windows build:
+  powershell -ExecutionPolicy Bypass -File .\scripts\build.ps1
+
+Quick package:
+  powershell -ExecutionPolicy Bypass -File .\scripts\package.ps1

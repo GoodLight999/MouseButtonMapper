@@ -1,0 +1,31 @@
+name: Bug report
+description: 動作不良を報告します
+title: "[Bug] "
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      placeholder: 8.2.0
+    validations:
+      required: true
+  - type: textarea
+    id: symptom
+    attributes:
+      label: 症状
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 再現手順
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Windows・マウス・対象アプリ
+  - type: textarea
+    id: logs
+    attributes:
+      label: ログ（秘密情報と個人パスを削除してください）
