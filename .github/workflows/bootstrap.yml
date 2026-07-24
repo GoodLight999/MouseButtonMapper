@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - stabilize-v8.2-and-ci
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -11,12 +14,14 @@ permissions:
 
 jobs:
   restore-source:
+    if: github.repository == 'GoodLight999/MouseButtonMapper'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Check out branch
+      - name: Check out protected source branch
         uses: actions/checkout@v6
         with:
+          ref: stabilize-v8.2-and-ci
           fetch-depth: 0
 
       - name: Restore audited repository snapshot
