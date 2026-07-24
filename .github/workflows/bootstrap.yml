@@ -1,0 +1,48 @@
+name: Bootstrap repository source
+
+on:
+  push:
+    branches:
+      - stabilize-v8.2-and-ci
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  restore-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Restore audited repository snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ ! -f .bootstrap/xpart-000 || ! -f .bootstrap/xpart-001 ]] || ! compgen -G '.bootstrap/ypart-*' > /dev/null; then
+            echo 'Bootstrap payload is already removed; nothing to do.'
+            exit 0
+          fi
+
+          cat .bootstrap/xpart-000 .bootstrap/xpart-001 .bootstrap/ypart-* > /tmp/repository.b64
+          base64 --decode /tmp/repository.b64 > /tmp/repository.tar.xz
+          echo '7c162d68d0f38328c968644e35c64f9bfc6ad0f3056bbaa5a1d5a7909f9f3ef8  /tmp/repository.tar.xz' | sha256sum --check --strict
+          tar -xJf /tmp/repository.tar.xz -C .
+          rm -rf .bootstrap
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add --all
+
+          if git diff --cached --quiet; then
+            echo 'No repository changes to commit.'
+            exit 0
+          fi
+
+          git commit -m 'Import audited v8.2.0 source, CI, and handoff documentation'
+          git push origin HEAD:stabilize-v8.2-and-ci
