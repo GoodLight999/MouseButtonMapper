@@ -35,16 +35,19 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+      - name: Windows unit tests
+        shell: pwsh
+        run: go test ./...
       - name: Windows vet
         shell: pwsh
         run: go vet -unsafeptr=false ./...
       - name: Build and package
         shell: pwsh
-        run: .\scripts\package.ps1 -Version 8.2.0
+        run: .\scripts\package.ps1 -Version 8.3.0
       - name: Upload portable package
         uses: actions/upload-artifact@v7
         with:
           name: MouseButtonMapper-windows-x64
-          path: dist/MouseButtonMapper-v8.2.0-windows-x64.zip
+          path: dist/MouseButtonMapper-v8.3.0-windows-x64.zip
           if-no-files-found: error
           retention-days: 30
