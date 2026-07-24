@@ -1,0 +1,33 @@
+# Build outputs
+*.exe
+*.zip
+*.msi
+*.sha256
+/dist/
+/build/
+/release/
+
+# User state and diagnostics
+config.json
+config_*.json
+*.log
+exports/
+
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+*.pfx
+*.p12
+*.key
+*.pem
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Go
+*.test
+coverage.out
