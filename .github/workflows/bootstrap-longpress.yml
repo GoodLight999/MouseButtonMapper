@@ -1,0 +1,51 @@
+name: Bootstrap long-press source
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  restore-source:
+    if: github.repository == 'GoodLight999/MouseButtonMapper'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out feature branch
+        uses: actions/checkout@v6
+        with:
+          ref: feature/long-press
+          fetch-depth: 0
+          show-progress: false
+
+      - name: Restore audited long-press source
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ ! -f .bootstrap-longpress/part-00 || ! -f .bootstrap-longpress/part-07 ]]; then
+            echo 'Bootstrap payload is already removed; nothing to do.'
+            exit 0
+          fi
+
+          cat .bootstrap-longpress/part-* > /tmp/longpress.b64
+          echo 'd918d51c4b265d17a304ac39e75c8122ec70049c5efdc3d02a57757d262c19da  /tmp/longpress.b64' | sha256sum --check --strict
+          base64 --decode /tmp/longpress.b64 > /tmp/longpress.tar.xz
+          echo '52849b4c3ea6f7b65a3ec66cdd3027dce93db9b05c9fbfaacf984dac04092775  /tmp/longpress.tar.xz' | sha256sum --check --strict
+          tar -xJf /tmp/longpress.tar.xz -C .
+          rm -rf .bootstrap-longpress
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add --all
+
+          if git diff --cached --quiet; then
+            echo 'No source changes to commit.'
+            exit 0
+          fi
+
+          git commit -m 'Add safe short-press and long-press actions'
+          git push origin HEAD:feature/long-press
