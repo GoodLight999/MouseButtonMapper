@@ -191,6 +191,28 @@ func TestJoyConMouseOutputEncoding(t *testing.T) {
 	}
 }
 
+func TestJoyConOutputPreservesPhysicalKeys(t *testing.T) {
+	if joyConShouldInjectTapKey(true) {
+		t.Fatal("tap output would inject and release a physically-held key")
+	}
+	if !joyConShouldInjectTapKey(false) {
+		t.Fatal("tap output did not inject a free key")
+	}
+
+	owned := joyConOutputReference{Count: 1, Owned: true}
+	if joyConShouldReleaseOwnedKey(owned, true) {
+		t.Fatal("Hold output would release a key that became physically held")
+	}
+	if !joyConShouldReleaseOwnedKey(owned, false) {
+		t.Fatal("Hold output did not release an owned key")
+	}
+
+	borrowed := joyConOutputReference{Count: 1, Owned: false}
+	if joyConShouldReleaseOwnedKey(borrowed, false) {
+		t.Fatal("Hold output would release a key it never pressed")
+	}
+}
+
 func TestOldConfigWithoutJoyConLoadsAndRoundTrips(t *testing.T) {
 	oldJSON := `{"Version":9,"ActiveProfileId":"p1","Profiles":[{"Id":"p1","Name":"旧設定","Rules":[{"Enabled":true,"Input":[{"Kind":"Mouse","Code":"X1"}],"Mode":"Tap","Output":[{"Kind":"Key","Code":"A"}]}]}]}`
 	var cfg Config
