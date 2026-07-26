@@ -9,6 +9,10 @@ import (
 	"time"
 )
 
+const joyConStatusNotifyInterval = 50 * time.Millisecond
+
+var errJoyConRescanRequested = errors.New("Joy-Con rescan requested")
+
 type JoyConTransport interface {
 	Device() JoyConDeviceInfo
 	SetFullReportMode() error
@@ -37,8 +41,11 @@ type JoyConWorker struct {
 	now           func() time.Time
 	rescan        chan struct{}
 
-	statusMu sync.RWMutex
-	status   JoyConConnectionStatus
+	statusMu       sync.RWMutex
+	status         JoyConConnectionStatus
+	lastNotified   JoyConConnectionStatus
+	lastNotifiedAt time.Time
+	hasNotified    bool
 }
 
 func NewJoyConWorker(options JoyConWorkerOptions) (*JoyConWorker, error) {
@@ -91,7 +98,7 @@ func (w *JoyConWorker) Run(ctx context.Context) error {
 		return errors.New("Joy-Con worker is nil")
 	}
 	for {
-		if err := ctx.Err(); err != nil {
+		if ctx.Err() != nil {
 			return nil
 		}
 		config := normalizeJoyConProfileConfig(w.config())
@@ -102,7 +109,7 @@ func (w *JoyConWorker) Run(ctx context.Context) error {
 			status.Charging = false
 			status.LastError = ""
 			w.publishStatus(status)
-			if !w.waitForRetry(ctx, config.Reconnect.IntervalMs) {
+			if !w.waitForRescanOrStop(ctx) {
 				return nil
 			}
 			continue
@@ -111,7 +118,7 @@ func (w *JoyConWorker) Run(ctx context.Context) error {
 		device, err := w.findDevice(config.PreferredDevice)
 		if err != nil {
 			w.publishFailure(err)
-			if !w.waitForRetry(ctx, config.Reconnect.IntervalMs) {
+			if !w.waitAfterFailure(ctx, config) {
 				return nil
 			}
 			continue
@@ -120,7 +127,7 @@ func (w *JoyConWorker) Run(ctx context.Context) error {
 		transport, err := w.backend.Open(device)
 		if err != nil {
 			w.publishFailure(err)
-			if !w.waitForRetry(ctx, config.Reconnect.IntervalMs) {
+			if !w.waitAfterFailure(ctx, config) {
 				return nil
 			}
 			continue
@@ -129,13 +136,20 @@ func (w *JoyConWorker) Run(ctx context.Context) error {
 		if err := transport.SetFullReportMode(); err != nil {
 			_ = transport.Close()
 			w.publishFailure(fmt.Errorf("set Joy-Con full report mode: %w", err))
-			if !w.waitForRetry(ctx, config.Reconnect.IntervalMs) {
+			if !w.waitAfterFailure(ctx, config) {
 				return nil
 			}
 			continue
 		}
 
-		if err := w.runConnected(ctx, transport, config); err != nil && !errors.Is(err, context.Canceled) {
+		err = w.runConnected(ctx, transport, config)
+		if errors.Is(err, context.Canceled) || ctx.Err() != nil {
+			return nil
+		}
+		if errors.Is(err, errJoyConRescanRequested) {
+			continue
+		}
+		if err != nil {
 			w.publishFailure(err)
 		}
 		if !config.Reconnect.Enabled {
@@ -148,6 +162,13 @@ func (w *JoyConWorker) Run(ctx context.Context) error {
 			return nil
 		}
 	}
+}
+
+func (w *JoyConWorker) waitAfterFailure(ctx context.Context, config JoyConProfileConfig) bool {
+	if !config.Reconnect.Enabled {
+		return w.waitForRescanOrStop(ctx)
+	}
+	return w.waitForRetry(ctx, config.Reconnect.IntervalMs)
 }
 
 func (w *JoyConWorker) findDevice(preferred string) (JoyConDeviceInfo, error) {
@@ -226,7 +247,7 @@ func (w *JoyConWorker) runConnected(ctx context.Context, transport JoyConTranspo
 		case <-ctx.Done():
 			return context.Canceled
 		case <-w.rescan:
-			return nil
+			return errJoyConRescanRequested
 		case result := <-readResults:
 			if result.err != nil {
 				return fmt.Errorf("read Joy-Con input: %w", result.err)
@@ -285,10 +306,25 @@ func (w *JoyConWorker) publishFailure(err error) {
 }
 
 func (w *JoyConWorker) publishStatus(status JoyConConnectionStatus) {
+	now := time.Now()
+	if w.now != nil {
+		now = w.now()
+	}
 	w.statusMu.Lock()
 	w.status = status
+	notify := !w.hasNotified ||
+		status.Connected != w.lastNotified.Connected ||
+		status.LastError != w.lastNotified.LastError ||
+		status.LastInput != w.lastNotified.LastInput ||
+		status.ReconnectCount != w.lastNotified.ReconnectCount ||
+		now.Sub(w.lastNotifiedAt) >= joyConStatusNotifyInterval
+	if notify {
+		w.lastNotified = status
+		w.lastNotifiedAt = now
+		w.hasNotified = true
+	}
 	w.statusMu.Unlock()
-	if w.statusChanged != nil {
+	if notify && w.statusChanged != nil {
 		w.statusChanged(status)
 	}
 }
