@@ -113,6 +113,10 @@ type JoyConConnectionStatus struct {
 	LastReportAt   time.Time        `json:"LastReportAt,omitempty"`
 	LastError      string           `json:"LastError,omitempty"`
 	ReconnectCount uint64           `json:"ReconnectCount"`
+	RawStickX      uint16           `json:"RawStickX"`
+	RawStickY      uint16           `json:"RawStickY"`
+	StickX         float64          `json:"StickX"`
+	StickY         float64          `json:"StickY"`
 }
 
 func buildJoyConSubcommandReport(packet byte, subcommand byte, data []byte) ([]byte, error) {
