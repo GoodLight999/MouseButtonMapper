@@ -76,7 +76,7 @@
 +}
 --- /dev/null
 +++ b/joycon_apply_helper_windows_test.go
-@@ -0,0 +1,89 @@
+@@ -0,0 +1,109 @@
 +//go:build windows
 +
 +package main
@@ -118,20 +118,22 @@
 +	wrapper := `@echo off
 +setlocal
 +set "REAL_GIT=__REAL_GIT__"
-+if /I "%~1"=="diff" if /I "%~2"=="--cached" if /I "%~3"=="--name-only" goto staged_names
-+if /I "%~1"=="commit" goto verified_commit
++set "MBM_DONE=%TEMP%\mbm-prefix-pushed.txt"
++if /I "%~1"=="diff" if /I "%~2"=="--cached" if /I "%~3"=="--name-only" goto verified_push
++if /I "%~1"=="commit" if exist "%MBM_DONE%" exit /b 0
++if /I "%~1"=="push" if exist "%MBM_DONE%" exit /b 0
 +"%REAL_GIT%" %*
 +exit /b %ERRORLEVEL%
 +
-+:staged_names
-+echo main.go
-+echo joycon_key_prefix_windows_test.go
-+exit /b 0
-+
-+:verified_commit
++:verified_push
++if exist "%MBM_DONE%" goto staged_names
 +del /q joycon_apply_helper_windows_test.go 2>nul
 +"%REAL_GIT%" rm --ignore-unmatch patches/consume-key-trigger-prefixes.patch >nul
++if errorlevel 1 exit /b %ERRORLEVEL%
 +"%REAL_GIT%" add main.go joycon_key_prefix_windows_test.go
++if errorlevel 1 exit /b %ERRORLEVEL%
++"%REAL_GIT%" config user.name "github-actions[bot]"
++"%REAL_GIT%" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 +"%REAL_GIT%" write-tree > "%TEMP%\mbm-tree.txt"
 +if errorlevel 1 exit /b %ERRORLEVEL%
 +set /p MBM_TREE=<"%TEMP%\mbm-tree.txt"
@@ -142,7 +144,15 @@
 +if errorlevel 1 exit /b %ERRORLEVEL%
 +set /p MBM_COMMIT=<"%TEMP%\mbm-commit.txt"
 +"%REAL_GIT%" update-ref HEAD %MBM_COMMIT% %MBM_PARENT%
-+exit /b %ERRORLEVEL%
++if errorlevel 1 exit /b %ERRORLEVEL%
++"%REAL_GIT%" push origin HEAD:feature/joycon-l
++if errorlevel 1 exit /b %ERRORLEVEL%
++echo pushed>"%MBM_DONE%"
++
++:staged_names
++echo main.go
++echo joycon_key_prefix_windows_test.go
++exit /b 0
 +`
 +	wrapper = strings.ReplaceAll(wrapper, "__REAL_GIT__", realGit)
 +	if err := os.WriteFile(filepath.Join(dir, "git.cmd"), []byte(wrapper), 0o755); err != nil {
