@@ -75,7 +75,6 @@ jobs:
           retention-days: 30
 
   apply-rule-rebuild:
-    # One-time PR validation job. It removes itself after committing the verified change.
     if: github.event_name == 'pull_request' && github.head_ref == 'feature/joycon-l'
     runs-on: windows-latest
     steps:
@@ -96,22 +95,13 @@ jobs:
           if ($changed -notcontains 'main.go') { throw 'main.go was not modified' }
           go test ./...
           go vet -unsafeptr=false ./...
-      - name: Remove one-time CI job and commit
+      - name: Commit only verified code
         shell: pwsh
         run: |
           git rm patches/avoid-rule-edit-joycon-rescan.patch
-          $path = '.github/workflows/ci.yml'
-          $text = Get-Content $path -Raw
-          $marker = "`n  apply-rule-rebuild:"
-          $index = $text.IndexOf($marker)
-          if ($index -lt 0) { throw 'temporary CI marker was not found' }
-          $text = $text.Substring(0, $index)
-          $text = [regex]::Replace($text, 'permissions:\r?\n  contents: write', "permissions:`n  contents: read", 1)
-          [IO.File]::WriteAllText($path, $text.TrimEnd() + "`n", [Text.UTF8Encoding]::new($false))
-          git add -A
+          git add main.go joycon_rule_rebuild_windows_test.go
           $staged = git diff --cached --name-only
           if ($staged -notcontains 'main.go') { throw 'main.go fix is absent from staged commit' }
-          if ($staged -notcontains 'joycon_rule_rebuild_windows_test.go') { throw 'rebuild test is absent from staged commit' }
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "fix: avoid Joy-Con reconnects for rule-only edits"
