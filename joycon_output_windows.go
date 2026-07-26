@@ -236,6 +236,10 @@ func (a *App) physicalKeyDown(vk uint32) bool {
 	return a.keyDown[vk] || a.keyDown[genericVK(vk)]
 }
 
+func joyConWheelData(delta int32) uint32 {
+	return uint32(delta)
+}
+
 func joyConMouseTapInputs(code string) ([]INPUT, bool) {
 	switch normMouse(code) {
 	case "Left":
@@ -249,9 +253,9 @@ func joyConMouseTapInputs(code string) ([]INPUT, bool) {
 	case "X2":
 		return []INPUT{makeJoyConMouseInput(2, joyConMouseEventXDown), makeJoyConMouseInput(2, joyConMouseEventXUp)}, true
 	case "WheelUp":
-		return []INPUT{makeJoyConMouseInput(uint32(joyConWheelDelta), joyConMouseEventWheel)}, true
+		return []INPUT{makeJoyConMouseInput(joyConWheelData(joyConWheelDelta), joyConMouseEventWheel)}, true
 	case "WheelDown":
-		return []INPUT{makeJoyConMouseInput(uint32(0)-uint32(joyConWheelDelta), joyConMouseEventWheel)}, true
+		return []INPUT{makeJoyConMouseInput(joyConWheelData(-joyConWheelDelta), joyConMouseEventWheel)}, true
 	default:
 		return nil, false
 	}
