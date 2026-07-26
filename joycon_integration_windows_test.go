@@ -11,10 +11,10 @@ import (
 
 func TestParseJoyConTokenRequiresExplicitPrefix(t *testing.T) {
 	checks := map[string]JoyConButton{
-		"Joy-Con ZL":             JoyConButtonZL,
-		"JoyCon StickUp":         JoyConStickUp,
-		"Joy-Con (L) Capture":    JoyConButtonCapture,
-		"Joy-Con スティック押込み": JoyConButtonStick,
+		"Joy-Con ZL":          JoyConButtonZL,
+		"JoyCon StickUp":      JoyConStickUp,
+		"Joy-Con (L) Capture": JoyConButtonCapture,
+		"Joy-Con スティック押込み":    JoyConButtonStick,
 	}
 	for text, want := range checks {
 		got, ok := parseJoyConToken(text)
@@ -71,13 +71,13 @@ func TestFindBestTriggerUsesMixedJoyConRules(t *testing.T) {
 		Output:  []Item{{Kind: "Key", Code: "A"}},
 	}
 	app := &App{
-		rules:       []Rule{singleMouse, comboMouse, comboKey},
-		mouseDown:   map[string]bool{"X1": true},
-		keyDown:     map[uint32]bool{},
-		joyConDown:  map[string]bool{"ZL": true, "L": true},
-		longPress:   map[string]*longPressState{},
-		consumedPrefix: map[string]bool{},
-		joyConConsumed: map[string]bool{},
+		rules:           []Rule{singleMouse, comboMouse, comboKey},
+		mouseDown:       map[string]bool{"X1": true},
+		keyDown:         map[uint32]bool{},
+		joyConDown:      map[string]bool{"ZL": true, "L": true},
+		longPress:       map[string]*longPressState{},
+		consumedPrefix:  map[string]bool{},
+		joyConConsumed:  map[string]bool{},
 		joyConHoldRules: map[string]Rule{},
 	}
 
