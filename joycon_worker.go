@@ -96,7 +96,12 @@ func (w *JoyConWorker) Run(ctx context.Context) error {
 		}
 		config := normalizeJoyConProfileConfig(w.config())
 		if !config.Enabled {
-			w.publishStatus(JoyConConnectionStatus{BatteryPercent: -1})
+			status := w.Status()
+			status.Connected = false
+			status.BatteryPercent = -1
+			status.Charging = false
+			status.LastError = ""
+			w.publishStatus(status)
 			if !w.waitForRetry(ctx, config.Reconnect.IntervalMs) {
 				return nil
 			}
@@ -167,6 +172,8 @@ func (w *JoyConWorker) runConnected(ctx context.Context, transport JoyConTranspo
 	tracker := newJoyConStateTracker(device.StableID())
 	readResults := make(chan joyConReadResult, 1)
 	readDone := make(chan struct{})
+	stopRead := make(chan struct{})
+	var stopReadOnce sync.Once
 
 	go func() {
 		defer close(readDone)
@@ -175,6 +182,8 @@ func (w *JoyConWorker) runConnected(ctx context.Context, transport JoyConTranspo
 			select {
 			case readResults <- joyConReadResult{state: state, err: err}:
 			case <-ctx.Done():
+				return
+			case <-stopRead:
 				return
 			}
 			if err != nil {
@@ -192,10 +201,15 @@ func (w *JoyConWorker) runConnected(ctx context.Context, transport JoyConTranspo
 	w.publishStatus(status)
 
 	closeAndRelease := func() {
+		stopReadOnce.Do(func() { close(stopRead) })
 		_ = transport.Close()
 		for _, event := range tracker.Disconnect(w.now()) {
 			w.emit(event)
 		}
+		status.Connected = false
+		status.BatteryPercent = -1
+		status.Charging = false
+		w.publishStatus(status)
 		select {
 		case <-readDone:
 		case <-time.After(2 * time.Second):
