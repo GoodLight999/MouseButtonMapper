@@ -1,0 +1,40 @@
+diff --git a/main.go b/main.go
+index 03b35d2..661ca87 100644
+--- a/main.go
++++ b/main.go
+@@ -1498,9 +1498,9 @@ func normalizeConfig(cfg Config) Config {
+ }
+ 
+ func (a *App) applyConfig(cfg Config) {
+ 	a.mu.Lock()
+-	defer a.mu.Unlock()
+ 	a.abortAllLongPressLocked("configuration reloaded", false)
++	a.clearJoyConInputStateLocked("configuration reloaded")
+ 	cfg = normalizeConfig(cfg)
+ 	a.config = cfg
+ 	a.editorProfileIndex = a.profileIndexByIDLocked(cfg.ActiveProfileId)
+@@ -1511,6 +1511,8 @@ func (a *App) applyConfig(cfg Config) {
+ 	a.requestJoyConRescanLocked()
+ 	a.logf("loaded config: effective=%s base=%s rules=%d auto=%v bindings=%d", a.activeProfileNameLocked(), a.baseProfileNameLocked(), len(a.rules), cfg.AutoSwitch.Enabled, len(cfg.AutoSwitch.Bindings))
+ 	a.postUIRefreshLocked()
++	a.mu.Unlock()
++	a.releaseJoyConHeldOutputs()
+ }
+ 
+ func mustDefaultConfig() Config {
+@@ -1790,6 +1792,7 @@ func (a *App) reinstallHooksCurrent(reason string) {
+ 	a.consumedPrefix = map[string]bool{}
+ 	a.suppressedDown = map[string]bool{}
+ 	a.abortAllLongPressLocked("hooks reinstalled", true)
++	a.clearJoyConInputStateLocked("hooks reinstalled")
+ 	a.requestJoyConRescanLocked()
+ 	if a.recordingMode != "" {
+ 		a.recordingMode = ""
+@@ -1801,6 +1804,7 @@ func (a *App) reinstallHooksCurrent(reason string) {
+ 		a.logf("recording cancelled because hooks were reinstalled")
+ 	}
+ 	a.mu.Unlock()
++	a.releaseJoyConHeldOutputs()
+ 	time.Sleep(20 * time.Millisecond)
+ 	a.installHooksCurrent(reason)
+ }
