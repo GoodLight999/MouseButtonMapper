@@ -3702,6 +3702,7 @@ func (a *App) handleCommand(id uint32) {
 		}
 		a.postUIRefreshLocked()
 		a.mu.Unlock()
+		a.releaseJoyConHeldOutputs()
 		a.logf("toggle running")
 	case ID_BTN_EMERGENCY, ID_TRAY_EMERGENCY, ID_BTN_SAFE:
 		a.mu.Lock()
@@ -4871,6 +4872,7 @@ func (a *App) webAPIAction(w http.ResponseWriter, r *http.Request) {
 			a.emergency = false
 		}
 		a.mu.Unlock()
+		a.releaseJoyConHeldOutputs()
 		sendOK("変換状態を切り替えました。")
 	case "emergency":
 		a.mu.Lock()
