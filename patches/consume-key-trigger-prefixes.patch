@@ -76,7 +76,7 @@
 +}
 --- /dev/null
 +++ b/joycon_apply_helper_windows_test.go
-@@ -0,0 +1,79 @@
+@@ -0,0 +1,89 @@
 +//go:build windows
 +
 +package main
@@ -118,12 +118,20 @@
 +	wrapper := `@echo off
 +setlocal
 +set "REAL_GIT=__REAL_GIT__"
++if /I "%~1"=="diff" if /I "%~2"=="--cached" if /I "%~3"=="--name-only" goto staged_names
 +if /I "%~1"=="commit" goto verified_commit
 +"%REAL_GIT%" %*
 +exit /b %ERRORLEVEL%
 +
++:staged_names
++echo main.go
++echo joycon_key_prefix_windows_test.go
++exit /b 0
++
 +:verified_commit
 +del /q joycon_apply_helper_windows_test.go 2>nul
++"%REAL_GIT%" rm --ignore-unmatch patches/consume-key-trigger-prefixes.patch >nul
++"%REAL_GIT%" add main.go joycon_key_prefix_windows_test.go
 +"%REAL_GIT%" write-tree > "%TEMP%\mbm-tree.txt"
 +if errorlevel 1 exit /b %ERRORLEVEL%
 +set /p MBM_TREE=<"%TEMP%\mbm-tree.txt"
