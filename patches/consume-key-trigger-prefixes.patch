@@ -12,7 +12,7 @@
  		a.mu.Unlock()
 --- /dev/null
 +++ b/joycon_key_prefix_windows_test.go
-@@ -0,0 +1,70 @@
+@@ -0,0 +1,69 @@
 +//go:build windows
 +
 +package main
@@ -58,7 +58,6 @@
 +		enabled:          true,
 +		rules:            []Rule{rule},
 +		mouseDown:        map[string]bool{},
-+		mouseDownAt:      map[string]time.Time{},
 +		keyDown:          map[uint32]bool{},
 +		joyConDown:       map[string]bool{},
 +		joyConPending:    map[string]bool{},
