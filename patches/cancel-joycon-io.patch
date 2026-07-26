@@ -1,0 +1,12 @@
+diff --git a/joycon_hid_windows.go b/joycon_hid_windows.go
+index 1135f06..6a1c9ec 100644
+--- a/joycon_hid_windows.go
++++ b/joycon_hid_windows.go
+@@ -337,6 +337,7 @@ func (s *JoyConHIDSession) Close() error {
+ 	if handle == 0 {
+ 		return nil
+ 	}
++	_ = cancelJoyConPendingIO(handle)
+ 	ok, _, callErr := joyConCloseHandle.Call(handle)
+ 	if ok == 0 {
+ 		return joyConWindowsCallError("CloseHandle", callErr)
