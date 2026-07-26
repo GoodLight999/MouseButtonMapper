@@ -1,0 +1,36 @@
+name: Apply Joy-Con integration patch
+
+on:
+  push:
+    branches: [feature/joycon-l]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: feature/joycon-l
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Apply verified anchors
+        run: python3 scripts/apply_joycon_integration.py
+      - name: Format and test common code
+        run: |
+          gofmt -w *.go
+          go test ./...
+      - name: Commit integration
+        shell: bash
+        run: |
+          if git diff --quiet; then exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- '*.go'
+          git commit -m "feat: connect Joy-Con to shared input rules"
+          git push origin HEAD:feature/joycon-l
