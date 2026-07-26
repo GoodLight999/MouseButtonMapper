@@ -209,6 +209,10 @@ func (w *JoyConWorker) runConnected(ctx context.Context, transport JoyConTranspo
 		status.Connected = false
 		status.BatteryPercent = -1
 		status.Charging = false
+		status.RawStickX = 0
+		status.RawStickY = 0
+		status.StickX = 0
+		status.StickY = 0
 		w.publishStatus(status)
 		select {
 		case <-readDone:
@@ -236,6 +240,9 @@ func (w *JoyConWorker) runConnected(ctx context.Context, transport JoyConTranspo
 			status.Device = device
 			status.BatteryPercent = result.state.BatteryPercent
 			status.Charging = result.state.Charging
+			status.RawStickX = result.state.StickX
+			status.RawStickY = result.state.StickY
+			status.StickX, status.StickY = normalizeJoyConStick(result.state.StickX, result.state.StickY, config.Stick)
 			status.LastReportAt = at
 			status.LastError = ""
 			w.publishStatus(status)

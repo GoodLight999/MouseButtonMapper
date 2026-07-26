@@ -599,11 +599,14 @@ type App struct {
 	longPress       map[string]*longPressState
 	longPressSeq    uint64
 
-	joyConWorker     *JoyConWorker
-	joyConCancel     func()
-	joyConDone       chan struct{}
-	joyConStatus     JoyConConnectionStatus
-	joyConOutputRefs map[uint32]joyConOutputReference
+	joyConWorker             *JoyConWorker
+	joyConCancel             func()
+	joyConDone               chan struct{}
+	joyConStatus             JoyConConnectionStatus
+	joyConOutputRefs         map[uint32]joyConOutputReference
+	joyConCalibration        *JoyConCalibrationSession
+	joyConCalibrationActive  bool
+	joyConCalibrationMessage string
 
 	sendMu                  sync.Mutex
 	hookMu                  sync.RWMutex
@@ -3569,6 +3572,9 @@ func yesno(b bool) string {
 	return "☐"
 }
 func modeText(m string) string {
+	if strings.EqualFold(m, joyConRuleModeHold) {
+		return "押している間キーを保持する"
+	}
 	if strings.EqualFold(m, "Tap") || m == "" {
 		return "1回だけ実行する"
 	}
@@ -3606,6 +3612,8 @@ func itemsText(items []Item) string {
 			} else {
 				out = append(out, "Key("+it.Code+")")
 			}
+		} else if strings.EqualFold(it.Kind, "JoyCon") {
+			out = append(out, "Joy-Con "+joyConCodeText(it.Code))
 		} else {
 			out = append(out, it.Kind+"("+it.Code+")")
 		}
@@ -3857,6 +3865,12 @@ func (a *App) finishRecordingAuto() {
 		updated.LongPressAction = longPressActionExecute
 		updated.LongPressMs = normalizeLongPressMs(updated.LongPressMs)
 		updated.LongPressOutput = items
+	}
+	if err := validateJoyConHoldRule(updated); err != nil {
+		reset()
+		a.mu.Unlock()
+		messageBox("記録内容を保存できません", err.Error())
+		return
 	}
 	if err := validateLongPressRule(updated); err != nil {
 		reset()
@@ -4206,6 +4220,10 @@ func parseItemsText(text string, allowMouse bool, allowKey bool) ([]Item, error)
 			continue
 		}
 		if allowMouse {
+			if joy, ok := parseJoyConToken(tok); ok {
+				items = append(items, Item{Kind: "JoyCon", Code: joy})
+				continue
+			}
 			if m, ok := parseMouseToken(tok); ok {
 				items = append(items, Item{Kind: "Mouse", Code: m})
 				continue
@@ -4221,6 +4239,25 @@ func parseItemsText(text string, allowMouse bool, allowKey bool) ([]Item, error)
 	}
 	return items, nil
 }
+func parseJoyConToken(tok string) (string, bool) {
+	clean := strings.ToLower(strings.TrimSpace(tok))
+	clean = strings.ReplaceAll(clean, " ", "")
+	hasPrefix := strings.Contains(clean, "joy-con") || strings.Contains(clean, "joycon") || strings.HasPrefix(clean, "左joy")
+	if !hasPrefix {
+		return "", false
+	}
+	clean = strings.ReplaceAll(clean, "joy-con", "")
+	clean = strings.ReplaceAll(clean, "joycon", "")
+	clean = strings.TrimPrefix(clean, "(l)")
+	clean = strings.TrimPrefix(clean, "（l）")
+	clean = strings.TrimPrefix(clean, "左")
+	code := normalizeJoyConCode(clean)
+	if isKnownJoyConCode(code) {
+		return code, true
+	}
+	return "", false
+}
+
 func parseMouseToken(tok string) (string, bool) {
 	c := strings.ToLower(strings.TrimSpace(tok))
 	c = strings.ReplaceAll(c, " ", "")
@@ -4431,6 +4468,7 @@ func (a *App) startWebServer() error {
 	mux.HandleFunc("/api/rule", a.webAPIRule)
 	mux.HandleFunc("/api/profile", a.webAPIProfile)
 	mux.HandleFunc("/api/autoswitch", a.webAPIAutoSwitch)
+	mux.HandleFunc("/api/joycon", a.webAPIJoyCon)
 	mux.HandleFunc("/api/import-json", a.webAPIImportJSON)
 	mux.HandleFunc("/api/default-rules", a.webAPIDefaultRules)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -4953,6 +4991,7 @@ type ruleReq struct {
 	Field            string `json:"field"`
 	Enabled          bool   `json:"enabled"`
 	Input            string `json:"input"`
+	Mode             string `json:"mode"`
 	Output           string `json:"output"`
 	SuppressTrigger  bool   `json:"suppressTrigger"`
 	SuppressPrefix   bool   `json:"suppressPrefix"`
@@ -4975,7 +5014,7 @@ func (a *App) webAPIRule(w http.ResponseWriter, r *http.Request) {
 		msg = "チェックを切り替えました。"
 	case "save":
 		err = a.webSaveRule(req)
-		msg = "選択中のマウス割り当てを保存しました。現在適用中のプロファイルなら、動作にも即時反映されています。"
+		msg = "選択中の割り当てを保存しました。現在適用中のプロファイルなら、動作にも即時反映されています。"
 	case "add":
 		err = a.webAddRule()
 		msg = "ルールを追加しました。"
@@ -5036,9 +5075,12 @@ func (a *App) webSaveRule(req ruleReq) error {
 	if err != nil {
 		return fmt.Errorf("入力の解釈に失敗: %w", err)
 	}
-	output, err := parseItemsText(req.Output, false, true)
+	output, err := parseItemsText(req.Output, true, true)
 	if err != nil {
 		return fmt.Errorf("短押し時の実行内容の解釈に失敗: %w", err)
+	}
+	if err := validateExecutableOutputItems(output); err != nil {
+		return fmt.Errorf("短押し時の実行内容が不正です: %w", err)
 	}
 	if len(input) == 0 {
 		return fmt.Errorf("入力は1つ以上必要です。")
@@ -5047,9 +5089,12 @@ func (a *App) webSaveRule(req ruleReq) error {
 	action := normalizeLongPressAction(req.LongPressAction)
 	longOutput := []Item(nil)
 	if req.LongPressEnabled && action == longPressActionExecute {
-		longOutput, err = parseItemsText(req.LongPressOutput, false, true)
+		longOutput, err = parseItemsText(req.LongPressOutput, true, true)
 		if err != nil {
 			return fmt.Errorf("長押し時の実行内容の解釈に失敗: %w", err)
+		}
+		if err := validateExecutableOutputItems(longOutput); err != nil {
+			return fmt.Errorf("長押し時の実行内容が不正です: %w", err)
 		}
 	}
 	if !req.LongPressEnabled && len(output) == 0 {
@@ -5059,7 +5104,7 @@ func (a *App) webSaveRule(req ruleReq) error {
 	r := Rule{
 		Enabled:          req.Enabled,
 		Input:            input,
-		Mode:             "Tap",
+		Mode:             normalizeJoyConRuleMode(req.Mode),
 		Output:           output,
 		SuppressTrigger:  req.SuppressTrigger,
 		SuppressPrefix:   req.SuppressPrefix,
@@ -5073,6 +5118,9 @@ func (a *App) webSaveRule(req ruleReq) error {
 	}
 	if !hasSidePrefix(r.Input) {
 		r.SuppressPrefix = false
+	}
+	if err := validateJoyConHoldRule(r); err != nil {
+		return err
 	}
 	if err := validateLongPressRule(r); err != nil {
 		return err

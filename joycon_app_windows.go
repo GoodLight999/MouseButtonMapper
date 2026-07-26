@@ -99,6 +99,7 @@ func (a *App) startJoyConSubsystem() {
 		StatusChanged: func(status JoyConConnectionStatus) {
 			a.mu.Lock()
 			a.joyConStatus = status
+			a.collectJoyConCalibrationSampleLocked(status)
 			a.postActivityRefreshLocked()
 			a.mu.Unlock()
 		},
@@ -214,6 +215,11 @@ func (a *App) handleJoyConInputEvent(event InputEvent) {
 	}
 
 	if a.recordingMode != "" {
+		if a.recordingMode != "input" {
+			a.postActivityRefreshLocked()
+			a.mu.Unlock()
+			return
+		}
 		finish := false
 		if event.Down && !wasDown {
 			a.recordDownLocked(trigger, "押下")

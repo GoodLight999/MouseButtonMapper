@@ -11,30 +11,30 @@ import (
 )
 
 type joyConWebState struct {
-	ProfileName       string                  `json:"profileName"`
-	Enabled           bool                    `json:"enabled"`
-	PreferredDevice   string                  `json:"preferredDevice"`
-	ReconnectEnabled  bool                    `json:"reconnectEnabled"`
-	ReconnectMs       int                     `json:"reconnectMs"`
-	Stick             JoyConStickConfig       `json:"stick"`
-	Status            JoyConConnectionStatus  `json:"status"`
-	StatusText        string                  `json:"statusText"`
-	LastInputText     string                  `json:"lastInputText"`
-	CalibrationActive bool                    `json:"calibrationActive"`
-	CalibrationText   string                  `json:"calibrationText"`
+	ProfileName       string                 `json:"profileName"`
+	Enabled           bool                   `json:"enabled"`
+	PreferredDevice   string                 `json:"preferredDevice"`
+	ReconnectEnabled  bool                   `json:"reconnectEnabled"`
+	ReconnectMs       int                    `json:"reconnectMs"`
+	Stick             JoyConStickConfig      `json:"stick"`
+	Status            JoyConConnectionStatus `json:"status"`
+	StatusText        string                 `json:"statusText"`
+	LastInputText     string                 `json:"lastInputText"`
+	CalibrationActive bool                   `json:"calibrationActive"`
+	CalibrationText   string                 `json:"calibrationText"`
 }
 
 type joyConWebRequest struct {
-	Op                string  `json:"op"`
-	Enabled           bool    `json:"enabled"`
-	PreferredDevice   string  `json:"preferredDevice"`
-	ReconnectEnabled  bool    `json:"reconnectEnabled"`
-	ReconnectMs       int     `json:"reconnectMs"`
-	DeadZone          float64 `json:"deadZone"`
-	ReleaseZone       float64 `json:"releaseZone"`
-	DirectionMode     string  `json:"directionMode"`
-	InvertX           bool    `json:"invertX"`
-	InvertY           bool    `json:"invertY"`
+	Op               string  `json:"op"`
+	Enabled          bool    `json:"enabled"`
+	PreferredDevice  string  `json:"preferredDevice"`
+	ReconnectEnabled bool    `json:"reconnectEnabled"`
+	ReconnectMs      int     `json:"reconnectMs"`
+	DeadZone         float64 `json:"deadZone"`
+	ReleaseZone      float64 `json:"releaseZone"`
+	DirectionMode    string  `json:"directionMode"`
+	InvertX          bool    `json:"invertX"`
+	InvertY          bool    `json:"invertY"`
 }
 
 func (a *App) buildJoyConWebState() joyConWebState {
