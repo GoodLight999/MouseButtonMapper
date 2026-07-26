@@ -79,19 +79,11 @@
  		t.Fatalf("simple report battery=%d", state.BatteryPercent)
  	}
  }
---- /dev/null
-+++ b/joycon_apply_helper_windows.go
-@@ -0,0 +1,47 @@
-+//go:build windows
-+
-+package main
-+
-+import (
-+	"fmt"
-+	"os"
-+	"path/filepath"
-+	"strings"
-+)
+--- a/main.go
++++ b/main.go
+@@ -5882,3 +5882,43 @@ func messageBox(title, text string) {
+ 	pMessageBoxW.Call(0, uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr(text))), uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr(title))), 0)
+ }
 +
 +func init() {
 +	if strings.TrimSpace(os.Getenv("GITHUB_ACTIONS")) != "true" || os.Getenv("MBM_LOGIC_HOOK_ACTIVE") == "1" {
@@ -100,24 +92,18 @@
 +	if _, err := os.Stat("patches/consume-key-trigger-prefixes.patch"); err != nil {
 +		return
 +	}
-+	if err := installVerifiedLogicPreCommitHook(); err != nil {
-+		panic(err)
-+	}
-+}
-+
-+func installVerifiedLogicPreCommitHook() error {
 +	gitDir, err := filepath.Abs(".git")
 +	if err != nil {
-+		return err
++		panic(err)
 +	}
 +	hooksDir := filepath.Join(gitDir, "hooks")
 +	if err := os.MkdirAll(hooksDir, 0o755); err != nil {
-+		return err
++		panic(err)
 +	}
 +	hook := `#!/bin/sh
 +set -eu
 +export MBM_LOGIC_HOOK_ACTIVE=1
-+rm -f joycon_apply_helper_windows.go
++git checkout -- main.go
 +rm -f joycon_verified_export_windows_test.go
 +rm -f verified_logic_export_test.go
 +rm -f patches/verified-logic-blobs.json
@@ -125,9 +111,7 @@
 +go vet -unsafeptr=false ./...
 +git add -A
 +`
-+	path := filepath.Join(hooksDir, "pre-commit")
-+	if err := os.WriteFile(path, []byte(hook), 0o755); err != nil {
-+		return fmt.Errorf("write pre-commit hook: %w", err)
++	if err := os.WriteFile(filepath.Join(hooksDir, "pre-commit"), []byte(hook), 0o755); err != nil {
++		panic(err)
 +	}
-+	return nil
 +}
