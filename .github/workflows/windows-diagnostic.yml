@@ -1,0 +1,36 @@
+name: Windows diagnostic
+
+on:
+  push:
+    branches: [feature/joycon-l]
+
+permissions:
+  contents: write
+
+jobs:
+  capture:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: feature/joycon-l
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Capture Windows test output
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          go test ./... 2>&1 | Tee-Object -FilePath windows-test.log
+          "exit_code=$LASTEXITCODE" | Add-Content windows-test.log
+          exit 0
+      - name: Commit diagnostic log
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add windows-test.log
+          git commit -m "ci: capture Windows compile diagnostics"
+          git push origin HEAD:feature/joycon-l
