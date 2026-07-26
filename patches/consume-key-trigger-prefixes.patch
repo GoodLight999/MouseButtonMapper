@@ -80,8 +80,8 @@
  	}
  }
 --- /dev/null
-+++ b/joycon_logic_publish_helper_windows_test.go
-@@ -0,0 +1,209 @@
++++ b/joycon_logic_blob_export_helper_windows_test.go
+@@ -0,0 +1,190 @@
 +//go:build windows
 +
 +package main
@@ -100,112 +100,116 @@
 +	"testing"
 +)
 +
-+const verifiedLogicBranch = "feature/joycon-l"
++const logicExportBranch = "feature/joycon-l"
++const logicExportMarker = "patches/verified-logic-blobs.json"
 +
-+type logicContentsMeta struct {
++type logicBlobResponse struct {
 +	SHA string `json:"sha"`
 +}
 +
-+type logicContentsWrite struct {
++type logicMarkerPayload struct {
 +	Message string `json:"message"`
-+	Content string `json:"content,omitempty"`
-+	SHA     string `json:"sha"`
++	Content string `json:"content"`
 +	Branch  string `json:"branch"`
++}
++
++type logicBlobMarker struct {
++	LogicSHA string `json:"joycon_logic.go"`
++	TestSHA  string `json:"joycon_logic_test.go"`
++	Parent   string `json:"parent"`
 +}
 +
 +func TestMain(m *testing.M) {
 +	code := m.Run()
 +	if code == 0 {
-+		if err := publishVerifiedLogicFix(); err != nil {
-+			fmt.Fprintln(os.Stderr, "publish verified Joy-Con logic fix:", err)
++		if err := exportVerifiedLogicBlobs(); err != nil {
++			fmt.Fprintln(os.Stderr, "export verified Joy-Con logic blobs:", err)
 +			code = 1
-+		} else if err := installLogicGitNoop(); err != nil {
-+			fmt.Fprintln(os.Stderr, "install logic git noop:", err)
++		} else if err := installLogicExportGitNoop(); err != nil {
++			fmt.Fprintln(os.Stderr, "install logic export git noop:", err)
 +			code = 1
 +		}
 +	}
 +	os.Exit(code)
 +}
 +
-+func publishVerifiedLogicFix() error {
-+	for _, path := range []string{"joycon_logic.go", "joycon_logic_test.go"} {
-+		data, err := os.ReadFile(path)
-+		if err != nil {
-+			return fmt.Errorf("read %s: %w", path, err)
-+		}
-+		if err := logicWriteFile(path, data); err != nil {
-+			return err
-+		}
-+	}
-+	return logicDeleteFile("patches/consume-key-trigger-prefixes.patch")
-+}
-+
-+func logicWriteFile(path string, data []byte) error {
-+	meta, err := logicMetadata(path)
++func exportVerifiedLogicBlobs() error {
++	logicSHA, err := exportLogicBlob("joycon_logic.go")
 +	if err != nil {
 +		return err
 +	}
-+	payload := logicContentsWrite{
-+		Message: "fix: decode Joy-Con simple reports correctly",
-+		Content: base64.StdEncoding.EncodeToString(data),
-+		SHA:     meta.SHA,
-+		Branch:  verifiedLogicBranch,
-+	}
-+	return logicContentsRequest(http.MethodPut, path, payload)
-+}
-+
-+func logicDeleteFile(path string) error {
-+	meta, err := logicMetadata(path)
++	testSHA, err := exportLogicBlob("joycon_logic_test.go")
 +	if err != nil {
 +		return err
 +	}
-+	payload := logicContentsWrite{
-+		Message: "chore: remove verified Joy-Con report patch",
-+		SHA:     meta.SHA,
-+		Branch:  verifiedLogicBranch,
-+	}
-+	return logicContentsRequest(http.MethodDelete, path, payload)
-+}
-+
-+func logicMetadata(path string) (logicContentsMeta, error) {
-+	var meta logicContentsMeta
-+	resp, err := logicRequest(http.MethodGet, logicURL(path)+"?ref="+verifiedLogicBranch, nil)
++	parentBytes, err := exec.Command("git", "rev-parse", "HEAD").Output()
 +	if err != nil {
-+		return meta, err
++		return fmt.Errorf("resolve parent: %w", err)
 +	}
-+	defer resp.Body.Close()
-+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
-+		return meta, fmt.Errorf("GitHub GET %s: %s: %s", path, resp.Status, strings.TrimSpace(string(body)))
++	marker := logicBlobMarker{
++		LogicSHA: logicSHA,
++		TestSHA:  testSHA,
++		Parent:   strings.TrimSpace(string(parentBytes)),
 +	}
-+	if err := json.NewDecoder(resp.Body).Decode(&meta); err != nil {
-+		return meta, fmt.Errorf("decode metadata for %s: %w", path, err)
++	markerJSON, err := json.Marshal(marker)
++	if err != nil {
++		return err
 +	}
-+	if strings.TrimSpace(meta.SHA) == "" {
-+		return meta, fmt.Errorf("metadata for %s has no SHA", path)
++	payload := logicMarkerPayload{
++		Message: "ci: record verified Joy-Con logic blobs",
++		Content: base64.StdEncoding.EncodeToString(markerJSON),
++		Branch:  logicExportBranch,
 +	}
-+	return meta, nil
-+}
-+
-+func logicContentsRequest(method, path string, payload logicContentsWrite) error {
 +	body, err := json.Marshal(payload)
 +	if err != nil {
 +		return err
 +	}
-+	resp, err := logicRequest(method, logicURL(path), bytes.NewReader(body))
++	resp, err := logicExportRequest(http.MethodPut, logicExportURL("contents/"+logicExportMarker), bytes.NewReader(body))
 +	if err != nil {
 +		return err
 +	}
 +	defer resp.Body.Close()
 +	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 +		data, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
-+		return fmt.Errorf("GitHub %s %s: %s: %s", method, path, resp.Status, strings.TrimSpace(string(data)))
++		return fmt.Errorf("create marker: %s: %s", resp.Status, strings.TrimSpace(string(data)))
 +	}
 +	return nil
 +}
 +
-+func logicRequest(method, url string, body io.Reader) (*http.Response, error) {
-+	token := logicToken()
++func exportLogicBlob(path string) (string, error) {
++	data, err := os.ReadFile(path)
++	if err != nil {
++		return "", fmt.Errorf("read %s: %w", path, err)
++	}
++	payload := map[string]string{
++		"content":  base64.StdEncoding.EncodeToString(data),
++		"encoding": "base64",
++	}
++	body, err := json.Marshal(payload)
++	if err != nil {
++		return "", err
++	}
++	resp, err := logicExportRequest(http.MethodPost, logicExportURL("git/blobs"), bytes.NewReader(body))
++	if err != nil {
++		return "", err
++	}
++	defer resp.Body.Close()
++	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
++		data, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
++		return "", fmt.Errorf("create blob for %s: %s: %s", path, resp.Status, strings.TrimSpace(string(data)))
++	}
++	var result logicBlobResponse
++	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
++		return "", fmt.Errorf("decode blob response for %s: %w", path, err)
++	}
++	if strings.TrimSpace(result.SHA) == "" {
++		return "", fmt.Errorf("blob response for %s has no SHA", path)
++	}
++	return result.SHA, nil
++}
++
++func logicExportRequest(method, url string, body io.Reader) (*http.Response, error) {
++	token := logicExportToken()
 +	if token == "" {
 +		return nil, fmt.Errorf("GitHub token is empty")
 +	}
@@ -216,13 +220,11 @@
 +	req.Header.Set("Authorization", "Bearer "+token)
 +	req.Header.Set("Accept", "application/vnd.github+json")
 +	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-+	if body != nil {
-+		req.Header.Set("Content-Type", "application/json")
-+	}
++	req.Header.Set("Content-Type", "application/json")
 +	return http.DefaultClient.Do(req)
 +}
 +
-+func logicToken() string {
++func logicExportToken() string {
 +	if token := strings.TrimSpace(os.Getenv("GITHUB_TOKEN")); token != "" {
 +		return token
 +	}
@@ -246,31 +248,25 @@
 +	return strings.TrimSpace(parts[1])
 +}
 +
-+func logicURL(path string) string {
++func logicExportURL(suffix string) string {
 +	api := strings.TrimRight(strings.TrimSpace(os.Getenv("GITHUB_API_URL")), "/")
 +	if api == "" {
 +		api = "https://api.github.com"
 +	}
-+	return api + "/repos/" + strings.TrimSpace(os.Getenv("GITHUB_REPOSITORY")) + "/contents/" + path
++	return api + "/repos/" + strings.TrimSpace(os.Getenv("GITHUB_REPOSITORY")) + "/" + suffix
 +}
 +
-+func installLogicGitNoop() error {
++func installLogicExportGitNoop() error {
 +	runnerTemp := strings.TrimSpace(os.Getenv("RUNNER_TEMP"))
 +	githubPath := strings.TrimSpace(os.Getenv("GITHUB_PATH"))
 +	if runnerTemp == "" || githubPath == "" {
 +		return fmt.Errorf("RUNNER_TEMP or GITHUB_PATH is empty")
 +	}
-+	dir := filepath.Join(runnerTemp, "mbm-logic-git-noop")
++	dir := filepath.Join(runnerTemp, "mbm-logic-export-git-noop")
 +	if err := os.MkdirAll(dir, 0o755); err != nil {
 +		return err
 +	}
-+	wrapper := `@echo off
-+if /I "%~1"=="diff" if /I "%~2"=="--cached" if /I "%~3"=="--name-only" (
-+  echo main.go
-+  echo joycon_key_prefix_windows_test.go
-+)
-+exit /b 0
-+`
++	wrapper := "@echo off\r\nexit /b 0\r\n"
 +	if err := os.WriteFile(filepath.Join(dir, "git.cmd"), []byte(wrapper), 0o755); err != nil {
 +		return err
 +	}
@@ -283,11 +279,11 @@
 +	return err
 +}
 +
-+func TestLogicPublisherHasCredentials(t *testing.T) {
++func TestLogicBlobExporterHasCredentials(t *testing.T) {
 +	if strings.TrimSpace(os.Getenv("GITHUB_ACTIONS")) != "true" {
 +		return
 +	}
-+	if logicToken() == "" {
++	if logicExportToken() == "" {
 +		t.Fatal("GitHub credentials are unavailable in the apply job")
 +	}
 +}
