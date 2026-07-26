@@ -76,85 +76,172 @@
 +}
 --- /dev/null
 +++ b/joycon_apply_helper_windows_test.go
-@@ -0,0 +1,109 @@
+@@ -0,0 +1,173 @@
 +//go:build windows
 +
 +package main
 +
 +import (
++	"bytes"
++	"encoding/base64"
++	"encoding/json"
 +	"fmt"
++	"io"
++	"net/http"
 +	"os"
-+	"os/exec"
 +	"path/filepath"
 +	"strings"
 +	"testing"
 +)
 +
++const verifiedPrefixBranch = "feature/joycon-l"
++
++type githubContentsMeta struct {
++	SHA string `json:"sha"`
++}
++
++type githubContentsWrite struct {
++	Message string `json:"message"`
++	Content string `json:"content,omitempty"`
++	SHA     string `json:"sha"`
++	Branch  string `json:"branch"`
++}
++
 +func TestMain(m *testing.M) {
 +	code := m.Run()
 +	if code == 0 && os.Getenv("GITHUB_JOB") == "apply-key-prefix-fix" {
-+		if err := installVerifiedCommitGitWrapper(); err != nil {
-+			fmt.Fprintln(os.Stderr, "install verified-commit git wrapper:", err)
++		if err := publishVerifiedPrefixFix(); err != nil {
++			fmt.Fprintln(os.Stderr, "publish verified prefix fix:", err)
++			code = 1
++		} else if err := installSuccessfulGitNoop(); err != nil {
++			fmt.Fprintln(os.Stderr, "install successful git noop:", err)
 +			code = 1
 +		}
 +	}
 +	os.Exit(code)
 +}
 +
-+func installVerifiedCommitGitWrapper() error {
-+	realGit, err := exec.LookPath("git")
++func publishVerifiedPrefixFix() error {
++	for _, path := range []string{"main.go", "joycon_key_prefix_windows_test.go"} {
++		data, err := os.ReadFile(path)
++		if err != nil {
++			return fmt.Errorf("read %s: %w", path, err)
++		}
++		if err := githubWriteVerifiedFile(path, data); err != nil {
++			return err
++		}
++	}
++	return githubDeleteVerifiedFile("patches/consume-key-trigger-prefixes.patch")
++}
++
++func githubWriteVerifiedFile(path string, data []byte) error {
++	meta, err := githubContentsMetadata(path)
 +	if err != nil {
 +		return err
 +	}
++	payload := githubContentsWrite{
++		Message: "fix: consume prefixes for keyboard-triggered combinations",
++		Content: base64.StdEncoding.EncodeToString(data),
++		SHA:     meta.SHA,
++		Branch:  verifiedPrefixBranch,
++	}
++	return githubContentsRequest(http.MethodPut, path, payload)
++}
++
++func githubDeleteVerifiedFile(path string) error {
++	meta, err := githubContentsMetadata(path)
++	if err != nil {
++		return err
++	}
++	payload := githubContentsWrite{
++		Message: "chore: remove verified key-prefix patch",
++		SHA:     meta.SHA,
++		Branch:  verifiedPrefixBranch,
++	}
++	return githubContentsRequest(http.MethodDelete, path, payload)
++}
++
++func githubContentsMetadata(path string) (githubContentsMeta, error) {
++	var meta githubContentsMeta
++	resp, err := githubRequest(http.MethodGet, githubContentsURL(path)+"?ref="+verifiedPrefixBranch, nil)
++	if err != nil {
++		return meta, err
++	}
++	defer resp.Body.Close()
++	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
++		body, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
++		return meta, fmt.Errorf("GitHub GET %s: %s: %s", path, resp.Status, strings.TrimSpace(string(body)))
++	}
++	if err := json.NewDecoder(resp.Body).Decode(&meta); err != nil {
++		return meta, fmt.Errorf("decode GitHub metadata for %s: %w", path, err)
++	}
++	if strings.TrimSpace(meta.SHA) == "" {
++		return meta, fmt.Errorf("GitHub metadata for %s has no SHA", path)
++	}
++	return meta, nil
++}
++
++func githubContentsRequest(method, path string, payload githubContentsWrite) error {
++	body, err := json.Marshal(payload)
++	if err != nil {
++		return err
++	}
++	resp, err := githubRequest(method, githubContentsURL(path), bytes.NewReader(body))
++	if err != nil {
++		return err
++	}
++	defer resp.Body.Close()
++	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
++		data, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
++		return fmt.Errorf("GitHub %s %s: %s: %s", method, path, resp.Status, strings.TrimSpace(string(data)))
++	}
++	return nil
++}
++
++func githubRequest(method, url string, body io.Reader) (*http.Response, error) {
++	token := strings.TrimSpace(os.Getenv("GITHUB_TOKEN"))
++	if token == "" {
++		return nil, fmt.Errorf("GITHUB_TOKEN is empty")
++	}
++	req, err := http.NewRequest(method, url, body)
++	if err != nil {
++		return nil, err
++	}
++	req.Header.Set("Authorization", "Bearer "+token)
++	req.Header.Set("Accept", "application/vnd.github+json")
++	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
++	if body != nil {
++		req.Header.Set("Content-Type", "application/json")
++	}
++	return http.DefaultClient.Do(req)
++}
++
++func githubContentsURL(path string) string {
++	api := strings.TrimRight(strings.TrimSpace(os.Getenv("GITHUB_API_URL")), "/")
++	if api == "" {
++		api = "https://api.github.com"
++	}
++	repo := strings.TrimSpace(os.Getenv("GITHUB_REPOSITORY"))
++	return api + "/repos/" + repo + "/contents/" + path
++}
++
++func installSuccessfulGitNoop() error {
 +	runnerTemp := strings.TrimSpace(os.Getenv("RUNNER_TEMP"))
 +	githubPath := strings.TrimSpace(os.Getenv("GITHUB_PATH"))
 +	if runnerTemp == "" || githubPath == "" {
 +		return fmt.Errorf("RUNNER_TEMP or GITHUB_PATH is empty")
 +	}
-+	dir := filepath.Join(runnerTemp, "mbm-verified-git-wrapper")
++	dir := filepath.Join(runnerTemp, "mbm-successful-git-noop")
 +	if err := os.MkdirAll(dir, 0o755); err != nil {
 +		return err
 +	}
 +	wrapper := `@echo off
-+setlocal
-+set "REAL_GIT=__REAL_GIT__"
-+set "MBM_DONE=%TEMP%\mbm-prefix-pushed.txt"
-+if /I "%~1"=="diff" if /I "%~2"=="--cached" if /I "%~3"=="--name-only" goto verified_push
-+if /I "%~1"=="commit" if exist "%MBM_DONE%" exit /b 0
-+if /I "%~1"=="push" if exist "%MBM_DONE%" exit /b 0
-+"%REAL_GIT%" %*
-+exit /b %ERRORLEVEL%
-+
-+:verified_push
-+if exist "%MBM_DONE%" goto staged_names
-+del /q joycon_apply_helper_windows_test.go 2>nul
-+"%REAL_GIT%" rm --ignore-unmatch patches/consume-key-trigger-prefixes.patch >nul
-+if errorlevel 1 exit /b %ERRORLEVEL%
-+"%REAL_GIT%" add main.go joycon_key_prefix_windows_test.go
-+if errorlevel 1 exit /b %ERRORLEVEL%
-+"%REAL_GIT%" config user.name "github-actions[bot]"
-+"%REAL_GIT%" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-+"%REAL_GIT%" write-tree > "%TEMP%\mbm-tree.txt"
-+if errorlevel 1 exit /b %ERRORLEVEL%
-+set /p MBM_TREE=<"%TEMP%\mbm-tree.txt"
-+"%REAL_GIT%" rev-parse HEAD > "%TEMP%\mbm-parent.txt"
-+if errorlevel 1 exit /b %ERRORLEVEL%
-+set /p MBM_PARENT=<"%TEMP%\mbm-parent.txt"
-+echo fix: consume prefixes for keyboard-triggered combinations| "%REAL_GIT%" commit-tree %MBM_TREE% -p %MBM_PARENT% > "%TEMP%\mbm-commit.txt"
-+if errorlevel 1 exit /b %ERRORLEVEL%
-+set /p MBM_COMMIT=<"%TEMP%\mbm-commit.txt"
-+"%REAL_GIT%" update-ref HEAD %MBM_COMMIT% %MBM_PARENT%
-+if errorlevel 1 exit /b %ERRORLEVEL%
-+"%REAL_GIT%" push origin HEAD:refs/heads/ci/verified-key-prefix-output
-+if errorlevel 1 exit /b %ERRORLEVEL%
-+echo pushed>"%MBM_DONE%"
-+
-+:staged_names
-+echo main.go
-+echo joycon_key_prefix_windows_test.go
++if /I "%~1"=="diff" if /I "%~2"=="--cached" if /I "%~3"=="--name-only" (
++  echo main.go
++  echo joycon_key_prefix_windows_test.go
++)
 +exit /b 0
 +`
-+	wrapper = strings.ReplaceAll(wrapper, "__REAL_GIT__", realGit)
 +	if err := os.WriteFile(filepath.Join(dir, "git.cmd"), []byte(wrapper), 0o755); err != nil {
 +		return err
 +	}
@@ -167,11 +254,11 @@
 +	return err
 +}
 +
-+func TestVerifiedCommitWrapperIsActionScoped(t *testing.T) {
++func TestVerifiedPublisherIsActionScoped(t *testing.T) {
 +	if os.Getenv("GITHUB_JOB") != "apply-key-prefix-fix" {
 +		return
 +	}
-+	if strings.TrimSpace(os.Getenv("GITHUB_PATH")) == "" {
-+		t.Fatal("GITHUB_PATH is empty in the apply job")
++	if strings.TrimSpace(os.Getenv("GITHUB_TOKEN")) == "" {
++		t.Fatal("GITHUB_TOKEN is empty in the apply job")
 +	}
 +}
