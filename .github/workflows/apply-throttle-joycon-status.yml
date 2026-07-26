@@ -1,0 +1,34 @@
+name: Apply Joy-Con status throttling
+
+on:
+  push:
+    branches: [feature/joycon-l]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: feature/joycon-l
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: false
+      - run: |
+          git apply --check patches/throttle-joycon-status.patch
+          git apply patches/throttle-joycon-status.patch
+          gofmt -w joycon_worker.go joycon_status_test.go
+          go test ./...
+      - run: git rm patches/throttle-joycon-status.patch .github/workflows/apply-throttle-joycon-status.yml
+      - shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- '*.go'
+          git commit -m "perf: throttle Joy-Con diagnostic refreshes"
+          git push origin HEAD:feature/joycon-l
