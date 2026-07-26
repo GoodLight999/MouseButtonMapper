@@ -178,6 +178,7 @@ $('toggleRunning').addEventListener('click',()=>action('toggle-running'));$('eme
 load();pollTimer=setInterval(load,750);
 })();
 </script>
+<script src="/joycon-ui.js"></script>
 </body>
 </html>
 `
