@@ -75,7 +75,7 @@ jobs:
           retention-days: 30
 
   apply-rule-rebuild:
-    if: github.actor != 'github-actions[bot]' && github.ref == 'refs/heads/feature/joycon-l'
+    if: github.ref == 'refs/heads/feature/joycon-l'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
