@@ -545,9 +545,10 @@ type Config struct {
 	AutoSwitch      AutoSwitchConfig `json:"AutoSwitch,omitempty"`
 }
 type Profile struct {
-	Id    string `json:"Id"`
-	Name  string `json:"Name"`
-	Rules []Rule `json:"Rules"`
+	Id     string              `json:"Id"`
+	Name   string              `json:"Name"`
+	Rules  []Rule              `json:"Rules"`
+	JoyCon JoyConProfileConfig `json:"JoyCon,omitempty"`
 }
 type Rule struct {
 	Enabled          bool   `json:"Enabled"`
@@ -585,14 +586,24 @@ type App struct {
 	logPath            string
 	iconPath           string
 
-	mouseDown      map[string]bool
-	mouseDownAt    map[string]time.Time
-	keyDown        map[uint32]bool
-	pendingTap     map[string]bool
-	consumedPrefix map[string]bool
-	suppressedDown map[string]bool
-	longPress      map[string]*longPressState
-	longPressSeq   uint64
+	mouseDown       map[string]bool
+	mouseDownAt     map[string]time.Time
+	keyDown         map[uint32]bool
+	joyConDown      map[string]bool
+	joyConPending   map[string]bool
+	joyConConsumed  map[string]bool
+	joyConHoldRules map[string]Rule
+	pendingTap      map[string]bool
+	consumedPrefix  map[string]bool
+	suppressedDown  map[string]bool
+	longPress       map[string]*longPressState
+	longPressSeq    uint64
+
+	joyConWorker     *JoyConWorker
+	joyConCancel     func()
+	joyConDone       chan struct{}
+	joyConStatus     JoyConConnectionStatus
+	joyConOutputRefs map[uint32]joyConOutputReference
 
 	sendMu                  sync.Mutex
 	hookMu                  sync.RWMutex
@@ -707,7 +718,7 @@ type App struct {
 	autoBlockedSince        time.Time
 }
 
-var app = &App{enabled: true, foregroundMonitorStatus: "起動準備中", mouseDown: map[string]bool{}, mouseDownAt: map[string]time.Time{}, keyDown: map[uint32]bool{}, pendingTap: map[string]bool{}, consumedPrefix: map[string]bool{}, suppressedDown: map[string]bool{}, longPress: map[string]*longPressState{}, logCh: make(chan string, 4096), recordHeld: map[string]bool{}, recordingRuleIndex: -1, actionCh: make(chan outputJob, 8192), configSaveCh: make(chan []byte, 8), shutdownCh: make(chan struct{}), hookReady: make(chan struct{}), hookDone: make(chan struct{}), foregroundEventCh: make(chan uintptr, 32)}
+var app = &App{enabled: true, foregroundMonitorStatus: "起動準備中", mouseDown: map[string]bool{}, mouseDownAt: map[string]time.Time{}, keyDown: map[uint32]bool{}, joyConDown: map[string]bool{}, joyConPending: map[string]bool{}, joyConConsumed: map[string]bool{}, joyConHoldRules: map[string]Rule{}, pendingTap: map[string]bool{}, consumedPrefix: map[string]bool{}, suppressedDown: map[string]bool{}, longPress: map[string]*longPressState{}, joyConOutputRefs: map[uint32]joyConOutputReference{}, joyConStatus: JoyConConnectionStatus{BatteryPercent: -1}, logCh: make(chan string, 4096), recordHeld: map[string]bool{}, recordingRuleIndex: -1, actionCh: make(chan outputJob, 8192), configSaveCh: make(chan []byte, 8), shutdownCh: make(chan struct{}), hookReady: make(chan struct{}), hookDone: make(chan struct{}), foregroundEventCh: make(chan uintptr, 32)}
 
 func main() {
 	if hasCommandLineFlag("--self-test", "/self-test") {
@@ -745,6 +756,7 @@ func main() {
 		_ = app.loadDefaultConfig()
 	}
 	app.startAutoSwitchWorker()
+	app.startJoyConSubsystem()
 	if err := app.startWebServer(); err != nil {
 		app.logf("web UI init error: %v", err)
 		messageBox("MouseButtonMapper", "設定画面の起動に失敗しました。\n"+err.Error())
@@ -785,6 +797,19 @@ func runSelfTest() error {
 	probeRule := Rule{Enabled: true, Input: []Item{{Kind: "Mouse", Code: "X1"}}, Mode: "Tap", LongPressEnabled: true, LongPressMs: 500, LongPressAction: longPressActionCancel, Output: []Item{{Kind: "Key", Code: "65"}}}
 	if err := validateLongPressRule(probeRule); err != nil {
 		return fmt.Errorf("long press rule self-test failed: %w", err)
+	}
+	joyConProbe := Rule{Enabled: true, Input: []Item{{Kind: "JoyCon", Code: string(JoyConStickUp)}}, Mode: joyConRuleModeHold, Output: []Item{{Kind: "Key", Code: "W"}}}
+	if err := validateJoyConHoldRule(joyConProbe); err != nil {
+		return fmt.Errorf("Joy-Con hold rule self-test failed: %w", err)
+	}
+	joyConReport := make([]byte, 12)
+	joyConReport[0] = joyConReportFull
+	joyConReport[5] = 1 << 7
+	joyConReport[6] = 0xd0
+	joyConReport[7] = 0x07
+	joyConReport[8] = 0x7d
+	if state, err := parseJoyConInputReport(joyConReport); err != nil || !state.Buttons[JoyConButtonZL] {
+		return fmt.Errorf("Joy-Con report parser self-test failed: %v", err)
 	}
 	probe := AppBinding{Enabled: true, ProfileId: cfg.ActiveProfileId, ProcessName: "selftest.exe"}
 	if !bindingMatches(probe, ForegroundAppInfo{ProcessName: "selftest"}) {
@@ -1419,8 +1444,10 @@ func normalizeConfig(cfg Config) Config {
 		if strings.TrimSpace(cfg.Profiles[i].Name) == "" {
 			cfg.Profiles[i].Name = fmt.Sprintf("プロファイル %d", i+1)
 		}
+		cfg.Profiles[i].JoyCon = normalizeJoyConProfileConfig(cfg.Profiles[i].JoyCon)
 		for j := range cfg.Profiles[i].Rules {
 			r := &cfg.Profiles[i].Rules[j]
+			r.Mode = normalizeJoyConRuleMode(r.Mode)
 			if r.LongPressEnabled {
 				r.LongPressMs = normalizeLongPressMs(r.LongPressMs)
 				r.LongPressAction = normalizeLongPressAction(r.LongPressAction)
@@ -1478,6 +1505,7 @@ func (a *App) applyConfig(cfg Config) {
 		a.clearAutoMatchLocked()
 	}
 	a.rebuildRulesLocked()
+	a.requestJoyConRescanLocked()
 	a.logf("loaded config: effective=%s base=%s rules=%d auto=%v bindings=%d", a.activeProfileNameLocked(), a.baseProfileNameLocked(), len(a.rules), cfg.AutoSwitch.Enabled, len(cfg.AutoSwitch.Bindings))
 	a.postUIRefreshLocked()
 }
@@ -1561,7 +1589,7 @@ func (a *App) reconcilePhysicalStateLocked() {
 }
 
 func (a *App) physicalInputIdleLocked() bool {
-	return len(a.mouseDown) == 0 && len(a.keyDown) == 0
+	return len(a.mouseDown) == 0 && len(a.keyDown) == 0 && len(a.joyConDown) == 0
 }
 
 func (a *App) profileIndexByIDLocked(id string) int {
@@ -1598,13 +1626,18 @@ func (a *App) rebuildRulesLocked() {
 	if idx >= len(a.config.Profiles) {
 		a.activeProfileIndex = 0
 		a.rules = nil
+		a.requestJoyConRescanLocked()
 		return
 	}
 	a.activeProfileIndex = idx
 	prof := a.config.Profiles[idx]
 	rules := make([]Rule, 0, len(prof.Rules))
 	for _, r := range prof.Rules {
-		if !r.Enabled || !strings.EqualFold(r.Mode, "Tap") || len(r.Input) == 0 || !ruleHasRunnableOutput(r) || isDangerousSingleReplacement(r) {
+		r.Mode = normalizeJoyConRuleMode(r.Mode)
+		if !r.Enabled || len(r.Input) == 0 || !ruleHasRunnableOutput(r) || isDangerousSingleReplacement(r) {
+			continue
+		}
+		if err := validateJoyConHoldRule(r); err != nil {
 			continue
 		}
 		if err := validateLongPressRule(r); err != nil {
@@ -1613,6 +1646,7 @@ func (a *App) rebuildRulesLocked() {
 		rules = append(rules, r)
 	}
 	a.rules = rules
+	a.requestJoyConRescanLocked()
 }
 
 func (a *App) activeProfileNameLocked() string {
@@ -1752,6 +1786,7 @@ func (a *App) reinstallHooksCurrent(reason string) {
 	a.consumedPrefix = map[string]bool{}
 	a.suppressedDown = map[string]bool{}
 	a.abortAllLongPressLocked("hooks reinstalled", true)
+	a.requestJoyConRescanLocked()
 	if a.recordingMode != "" {
 		a.recordingMode = ""
 		a.recordingRuleIndex = -1
@@ -1874,6 +1909,7 @@ func (a *App) messageLoop() {
 	}
 }
 func (a *App) cleanup() {
+	a.stopJoyConSubsystem()
 	// タイマーやUI処理が終了処理と競合しても、終了開始後に新しい入力を
 	// 注入しない。actionChは閉じず、shutdownChでワーカーを停止する。
 	// これにより、停止済みタイマーのコールバックが遅れて戻ってきても
@@ -1881,6 +1917,7 @@ func (a *App) cleanup() {
 	a.shuttingDown.Store(true)
 	a.mu.Lock()
 	a.abortAllLongPressLocked("application exit", true)
+	a.clearJoyConInputStateLocked("application exit")
 	a.mu.Unlock()
 	a.sendMu.Lock()
 	a.sendMu.Unlock()
@@ -1962,6 +1999,7 @@ func (a *App) handleKeyEvent(vk uint32, isDown bool) bool {
 	emergency := isDown && vk == VK_F12 && (a.keyDown[VK_CONTROL] || a.keyDown[VK_LCONTROL] || a.keyDown[VK_RCONTROL]) && (a.keyDown[VK_SHIFT] || a.keyDown[VK_LSHIFT] || a.keyDown[VK_RSHIFT]) && (a.keyDown[VK_MENU] || a.keyDown[VK_LMENU] || a.keyDown[VK_RMENU])
 	if emergency {
 		a.abortAllLongPressLocked("emergency stop", false)
+		a.clearJoyConInputStateLocked("emergency stop")
 		a.recordingMode = ""
 		a.recordingRuleIndex = -1
 		a.recordingProfileID = ""
@@ -2286,6 +2324,14 @@ func (a *App) markPrefixesConsumedLocked(r Rule) {
 		if strings.EqualFold(it.Kind, "Mouse") {
 			a.consumedPrefix[normMouse(it.Code)] = true
 		}
+		if strings.EqualFold(it.Kind, "JoyCon") {
+			code := normalizeJoyConCode(it.Code)
+			a.joyConConsumed[code] = true
+			if holdRule, ok := a.joyConHoldRules[code]; ok {
+				delete(a.joyConHoldRules, code)
+				a.enqueueRuleGuaranteed(joyConHoldPhaseRule(holdRule, false))
+			}
+		}
 	}
 }
 func (a *App) noteLastInputLocked(it Item, phase string) {
@@ -2356,6 +2402,13 @@ func (a *App) appendHeldMousePrefixesLocked() {
 			a.recordHeld[recordItemKey(it)] = true
 		}
 	}
+	for _, code := range append(append([]JoyConButton(nil), joyConLeftPhysicalButtons...), joyConStickDirections...) {
+		if a.joyConDown[string(code)] {
+			it := Item{Kind: "JoyCon", Code: string(code)}
+			a.appendRecordedItemLocked(it)
+			a.recordHeld[recordItemKey(it)] = true
+		}
+	}
 }
 
 func (a *App) recordDownLocked(it Item, phase string) {
@@ -2407,6 +2460,9 @@ func normalizeRecordedItem(it Item) Item {
 			return Item{Kind: "Key", Code: strconv.Itoa(int(genericVK(vk)))}
 		}
 	}
+	if strings.EqualFold(it.Kind, "JoyCon") {
+		return Item{Kind: "JoyCon", Code: normalizeJoyConCode(it.Code)}
+	}
 	return it
 }
 
@@ -2453,6 +2509,9 @@ func (a *App) isItemDownLocked(it Item) bool {
 		vk, ok := parseVK(it.Code)
 		return ok && (a.keyDown[vk] || a.keyDown[genericVK(vk)])
 	}
+	if strings.EqualFold(it.Kind, "JoyCon") {
+		return a.joyConDown[normalizeJoyConCode(it.Code)]
+	}
 	return false
 }
 func sameInput(a Item, b Item) bool {
@@ -2466,6 +2525,9 @@ func sameInput(a Item, b Item) bool {
 		av, aok := parseVK(a.Code)
 		bv, bok := parseVK(b.Code)
 		return aok && bok && genericVK(av) == genericVK(bv)
+	}
+	if strings.EqualFold(a.Kind, "JoyCon") {
+		return normalizeJoyConCode(a.Code) == normalizeJoyConCode(b.Code)
 	}
 	return false
 }
@@ -2550,25 +2612,7 @@ func parseVK(code string) (uint32, bool) {
 }
 
 func (a *App) sendRule(r Rule) {
-	keys := make([]uint32, 0, len(r.Output))
-	unsupported := []string{}
-	for _, it := range r.Output {
-		if strings.EqualFold(it.Kind, "Key") {
-			if vk, ok := parseVK(it.Code); ok {
-				keys = append(keys, vk)
-			} else {
-				unsupported = append(unsupported, it.Code)
-			}
-		} else {
-			unsupported = append(unsupported, it.Kind+":"+it.Code)
-		}
-	}
-	if len(unsupported) > 0 {
-		a.logf("unsupported output ignored: %v", unsupported)
-	}
-	if len(keys) > 0 {
-		a.sendShortcut(keys)
-	}
+	a.sendJoyConRuleOutput(r)
 }
 func isModifier(vk uint32) bool {
 	switch genericVK(vk) {
@@ -2717,6 +2761,7 @@ func (a *App) ReleaseModifiersNow() {
 	for _, vk := range mods {
 		inputs = append(inputs, makeKeyInput(vk, true))
 	}
+	inputs = a.appendJoyConHeldReleaseInputs(inputs)
 	a.callSendInput(inputs)
 	a.logf("manual modifier release")
 }
