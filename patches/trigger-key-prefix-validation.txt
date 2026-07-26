@@ -1,2 +1,0 @@
-Temporary trigger for the split-step keyboard-prefix validation job.
-Remove after the verified code commit is pushed.
