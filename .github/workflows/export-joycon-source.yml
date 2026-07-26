@@ -1,0 +1,36 @@
+name: Export Joy-Con source snapshot
+
+on:
+  push:
+    branches: [feature/joycon-l]
+
+permissions:
+  contents: write
+
+jobs:
+  export:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: feature/joycon-l
+      - name: Upload complete source snapshot
+        uses: actions/upload-artifact@v7
+        with:
+          name: MouseButtonMapper-joycon-source-audit
+          path: |
+            .
+            !.git/**
+            !dist/**
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 3
+      - name: Remove one-time export workflow
+        run: git rm .github/workflows/export-joycon-source.yml
+      - name: Commit cleanup
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore: remove temporary source export workflow"
+          git push origin HEAD:feature/joycon-l
