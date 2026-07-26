@@ -2071,6 +2071,9 @@ func (a *App) handleKeyEvent(vk uint32, isDown bool) bool {
 		return false
 	}
 	rule, ok := a.findBestTriggerLocked(it)
+	if ok && len(rule.Input) > 1 {
+		a.markPrefixesConsumedLocked(rule)
+	}
 	if ok && rule.LongPressEnabled {
 		started := a.startLongPressLocked(rule, it)
 		a.mu.Unlock()
