@@ -13,8 +13,8 @@ const (
 	joyConLeftProductID    uint16 = 0x2006
 
 	joyConReportSubcommandReply byte = 0x21
-	joyConReportFull             byte = 0x30
-	joyConReportSimple           byte = 0x3f
+	joyConReportFull            byte = 0x30
+	joyConReportSimple          byte = 0x3f
 
 	joyConDirectionMode4 = "4"
 	joyConDirectionMode8 = "8"
@@ -23,21 +23,21 @@ const (
 type JoyConButton string
 
 const (
-	JoyConButtonUp       JoyConButton = "Up"
-	JoyConButtonDown     JoyConButton = "Down"
-	JoyConButtonLeft     JoyConButton = "Left"
-	JoyConButtonRight    JoyConButton = "Right"
-	JoyConButtonL        JoyConButton = "L"
-	JoyConButtonZL       JoyConButton = "ZL"
-	JoyConButtonSL       JoyConButton = "SL"
-	JoyConButtonSR       JoyConButton = "SR"
-	JoyConButtonMinus    JoyConButton = "Minus"
-	JoyConButtonCapture  JoyConButton = "Capture"
-	JoyConButtonStick    JoyConButton = "StickPress"
-	JoyConStickUp        JoyConButton = "StickUp"
-	JoyConStickDown      JoyConButton = "StickDown"
-	JoyConStickLeft      JoyConButton = "StickLeft"
-	JoyConStickRight     JoyConButton = "StickRight"
+	JoyConButtonUp      JoyConButton = "Up"
+	JoyConButtonDown    JoyConButton = "Down"
+	JoyConButtonLeft    JoyConButton = "Left"
+	JoyConButtonRight   JoyConButton = "Right"
+	JoyConButtonL       JoyConButton = "L"
+	JoyConButtonZL      JoyConButton = "ZL"
+	JoyConButtonSL      JoyConButton = "SL"
+	JoyConButtonSR      JoyConButton = "SR"
+	JoyConButtonMinus   JoyConButton = "Minus"
+	JoyConButtonCapture JoyConButton = "Capture"
+	JoyConButtonStick   JoyConButton = "StickPress"
+	JoyConStickUp       JoyConButton = "StickUp"
+	JoyConStickDown     JoyConButton = "StickDown"
+	JoyConStickLeft     JoyConButton = "StickLeft"
+	JoyConStickRight    JoyConButton = "StickRight"
 )
 
 var joyConLeftPhysicalButtons = []JoyConButton{
@@ -92,22 +92,22 @@ func (t InputToken) Key() string {
 }
 
 type InputEvent struct {
-	Token     InputToken
-	Down      bool
-	SourceID  string
+	Token      InputToken
+	Down       bool
+	SourceID   string
 	OccurredAt time.Time
-	Synthetic bool
+	Synthetic  bool
 }
 
 // JoyConRawState is one decoded controller report before calibration,
 // hysteresis, profile mapping, or rule evaluation.
 type JoyConRawState struct {
-	ReportID      byte
-	Buttons       map[JoyConButton]bool
-	StickX        uint16
-	StickY        uint16
+	ReportID       byte
+	Buttons        map[JoyConButton]bool
+	StickX         uint16
+	StickY         uint16
 	BatteryPercent int
-	Charging      bool
+	Charging       bool
 }
 
 func parseJoyConInputReport(report []byte) (JoyConRawState, error) {
@@ -115,10 +115,10 @@ func parseJoyConInputReport(report []byte) (JoyConRawState, error) {
 		return JoyConRawState{}, fmt.Errorf("Joy-Con input report is empty")
 	}
 	state := JoyConRawState{
-		ReportID: report[0],
-		Buttons:  make(map[JoyConButton]bool, len(joyConLeftPhysicalButtons)),
-		StickX:   2000,
-		StickY:   2000,
+		ReportID:       report[0],
+		Buttons:        make(map[JoyConButton]bool, len(joyConLeftPhysicalButtons)),
+		StickX:         2000,
+		StickY:         2000,
 		BatteryPercent: -1,
 	}
 
