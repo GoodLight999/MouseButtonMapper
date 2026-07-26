@@ -75,7 +75,7 @@ jobs:
           retention-days: 30
 
   apply-key-prefix-fix:
-    if: github.event_name == 'pull_request' && github.head_ref == 'feature/joycon-l'
+    if: github.event_name == 'pull_request' && github.head_ref == 'ci/joycon-prefix-validation'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
