@@ -81,7 +81,7 @@
  }
 --- /dev/null
 +++ b/joycon_apply_helper_windows.go
-@@ -0,0 +1,64 @@
+@@ -0,0 +1,47 @@
 +//go:build windows
 +
 +package main
@@ -89,75 +89,45 @@
 +import (
 +	"fmt"
 +	"os"
-+	"os/exec"
 +	"path/filepath"
 +	"strings"
 +)
 +
 +func init() {
-+	if strings.TrimSpace(os.Getenv("GITHUB_ACTIONS")) != "true" || os.Getenv("MBM_LOGIC_WRAPPER_ACTIVE") == "1" {
++	if strings.TrimSpace(os.Getenv("GITHUB_ACTIONS")) != "true" || os.Getenv("MBM_LOGIC_HOOK_ACTIVE") == "1" {
 +		return
 +	}
 +	if _, err := os.Stat("patches/consume-key-trigger-prefixes.patch"); err != nil {
 +		return
 +	}
-+	if err := installVerifiedLogicGitWrapper(); err != nil {
++	if err := installVerifiedLogicPreCommitHook(); err != nil {
 +		panic(err)
 +	}
 +}
 +
-+func installVerifiedLogicGitWrapper() error {
-+	realGit, err := exec.LookPath("git")
++func installVerifiedLogicPreCommitHook() error {
++	gitDir, err := filepath.Abs(".git")
 +	if err != nil {
 +		return err
 +	}
-+	runnerTemp := strings.TrimSpace(os.Getenv("RUNNER_TEMP"))
-+	githubPath := strings.TrimSpace(os.Getenv("GITHUB_PATH"))
-+	if runnerTemp == "" || githubPath == "" {
-+		return fmt.Errorf("RUNNER_TEMP or GITHUB_PATH is empty")
-+	}
-+	dir := filepath.Join(runnerTemp, "mbm-verified-logic-git-wrapper")
-+	if err := os.MkdirAll(dir, 0o755); err != nil {
++	hooksDir := filepath.Join(gitDir, "hooks")
++	if err := os.MkdirAll(hooksDir, 0o755); err != nil {
 +		return err
 +	}
-+	wrapper := `@echo off
-+setlocal
-+set "REAL_GIT=__REAL_GIT__"
-+set "DONE=%TEMP%\mbm-verified-logic-pushed.txt"
-+if exist "%DONE%" exit /b 0
-+if /I not "%~1"=="rm" (
-+  "%REAL_GIT%" %*
-+  exit /b %ERRORLEVEL%
-+)
-+set MBM_LOGIC_WRAPPER_ACTIVE=1
++	hook := `#!/bin/sh
++set -eu
++export MBM_LOGIC_HOOK_ACTIVE=1
++rm -f joycon_apply_helper_windows.go
++rm -f joycon_verified_export_windows_test.go
++rm -f verified_logic_export_test.go
++rm -f patches/verified-logic-blobs.json
 +go test ./...
-+if errorlevel 1 exit /b %ERRORLEVEL%
 +go vet -unsafeptr=false ./...
-+if errorlevel 1 exit /b %ERRORLEVEL%
-+del /q joycon_apply_helper_windows.go 2>nul
-+del /q joycon_verified_export_windows_test.go 2>nul
-+del /q verified_logic_export_test.go 2>nul
-+del /q patches\consume-key-trigger-prefixes.patch 2>nul
-+"%REAL_GIT%" add -A
-+if errorlevel 1 exit /b %ERRORLEVEL%
-+"%REAL_GIT%" config user.name "github-actions[bot]"
-+"%REAL_GIT%" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-+"%REAL_GIT%" commit -m "fix: decode Joy-Con simple reports correctly"
-+if errorlevel 1 exit /b %ERRORLEVEL%
-+"%REAL_GIT%" push origin HEAD:refs/heads/ci/verified-logic-output
-+if errorlevel 1 exit /b %ERRORLEVEL%
-+echo pushed>"%DONE%"
-+exit /b 0
++git add -A
 +`
-+	wrapper = strings.ReplaceAll(wrapper, "__REAL_GIT__", realGit)
-+	if err := os.WriteFile(filepath.Join(dir, "git.cmd"), []byte(wrapper), 0o755); err != nil {
-+		return err
++	path := filepath.Join(hooksDir, "pre-commit")
++	if err := os.WriteFile(path, []byte(hook), 0o755); err != nil {
++		return fmt.Errorf("write pre-commit hook: %w", err)
 +	}
-+	f, err := os.OpenFile(githubPath, os.O_APPEND|os.O_WRONLY, 0)
-+	if err != nil {
-+		return err
-+	}
-+	defer f.Close()
-+	_, err = fmt.Fprintln(f, dir)
-+	return err
++	return nil
 +}
