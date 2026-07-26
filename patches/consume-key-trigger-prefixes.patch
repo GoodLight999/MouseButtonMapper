@@ -10,12 +10,12 @@
  	if ok && rule.LongPressEnabled {
  		started := a.startLongPressLocked(rule, it)
  		a.mu.Unlock()
---- /dev/null
+--- a/joycon_key_prefix_windows_test.go
 +++ b/joycon_key_prefix_windows_test.go
-@@ -0,0 +1,69 @@
-+//go:build windows
-+
-+package main
+@@ -1,3 +1,69 @@
+ //go:build windows
+ 
+ package main
 +
 +import "testing"
 +
