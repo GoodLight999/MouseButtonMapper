@@ -338,6 +338,7 @@ func (s *JoyConHIDSession) Close() error {
 	if handle == 0 {
 		return nil
 	}
+	_ = cancelJoyConPendingIO(handle)
 	ok, _, callErr := joyConCloseHandle.Call(handle)
 	if ok == 0 {
 		return joyConWindowsCallError("CloseHandle", callErr)
