@@ -34,14 +34,14 @@ var (
 	joyConHidDGetProductString = joyConHIDDLL.NewProc("HidD_GetProductString")
 	joyConHidDGetSerialString  = joyConHIDDLL.NewProc("HidD_GetSerialNumberString")
 
-	joyConSetupDiGetClassDevs              = joyConSetupAPIDLL.NewProc("SetupDiGetClassDevsW")
-	joyConSetupDiEnumDeviceInterfaces      = joyConSetupAPIDLL.NewProc("SetupDiEnumDeviceInterfaces")
-	joyConSetupDiGetDeviceInterfaceDetail  = joyConSetupAPIDLL.NewProc("SetupDiGetDeviceInterfaceDetailW")
-	joyConSetupDiDestroyDeviceInfoList     = joyConSetupAPIDLL.NewProc("SetupDiDestroyDeviceInfoList")
+	joyConSetupDiGetClassDevs             = joyConSetupAPIDLL.NewProc("SetupDiGetClassDevsW")
+	joyConSetupDiEnumDeviceInterfaces     = joyConSetupAPIDLL.NewProc("SetupDiEnumDeviceInterfaces")
+	joyConSetupDiGetDeviceInterfaceDetail = joyConSetupAPIDLL.NewProc("SetupDiGetDeviceInterfaceDetailW")
+	joyConSetupDiDestroyDeviceInfoList    = joyConSetupAPIDLL.NewProc("SetupDiDestroyDeviceInfoList")
 
-	joyConCreateFile = joyConKernel32DLL.NewProc("CreateFileW")
-	joyConReadFile   = joyConKernel32DLL.NewProc("ReadFile")
-	joyConWriteFile  = joyConKernel32DLL.NewProc("WriteFile")
+	joyConCreateFile  = joyConKernel32DLL.NewProc("CreateFileW")
+	joyConReadFile    = joyConKernel32DLL.NewProc("ReadFile")
+	joyConWriteFile   = joyConKernel32DLL.NewProc("WriteFile")
 	joyConCloseHandle = joyConKernel32DLL.NewProc("CloseHandle")
 )
 

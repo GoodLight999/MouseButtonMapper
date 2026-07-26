@@ -22,10 +22,10 @@ type JoyConReconnectConfig struct {
 }
 
 type JoyConProfileConfig struct {
-	Enabled         bool                    `json:"Enabled,omitempty"`
-	PreferredDevice string                  `json:"PreferredDevice,omitempty"`
-	Stick           JoyConStickConfig       `json:"Stick,omitempty"`
-	Reconnect       JoyConReconnectConfig   `json:"Reconnect,omitempty"`
+	Enabled         bool                  `json:"Enabled,omitempty"`
+	PreferredDevice string                `json:"PreferredDevice,omitempty"`
+	Stick           JoyConStickConfig     `json:"Stick,omitempty"`
+	Reconnect       JoyConReconnectConfig `json:"Reconnect,omitempty"`
 }
 
 func defaultJoyConProfileConfig() JoyConProfileConfig {

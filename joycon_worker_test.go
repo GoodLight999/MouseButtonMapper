@@ -10,12 +10,12 @@ import (
 )
 
 type fakeJoyConBackend struct {
-	mu          sync.Mutex
-	devices     []JoyConDeviceInfo
+	mu           sync.Mutex
+	devices      []JoyConDeviceInfo
 	enumerateErr error
-	transports  []*fakeJoyConTransport
-	enumerates  int
-	opens       int
+	transports   []*fakeJoyConTransport
+	enumerates   int
+	opens        int
 }
 
 func (b *fakeJoyConBackend) Enumerate() ([]JoyConDeviceInfo, error) {
@@ -48,12 +48,12 @@ func (b *fakeJoyConBackend) counts() (int, int) {
 }
 
 type fakeJoyConTransport struct {
-	device   JoyConDeviceInfo
-	modeErr  error
-	reads    chan joyConReadResult
-	closed   chan struct{}
+	device    JoyConDeviceInfo
+	modeErr   error
+	reads     chan joyConReadResult
+	closed    chan struct{}
 	closeOnce sync.Once
-	modeMu   sync.Mutex
+	modeMu    sync.Mutex
 	modeCalls int
 }
 
