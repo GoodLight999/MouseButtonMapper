@@ -75,6 +75,7 @@ jobs:
           retention-days: 30
 
   apply-rule-rebuild:
+    # One-time PR validation job. It removes itself after committing the verified change.
     if: github.event_name == 'pull_request' && github.head_ref == 'feature/joycon-l'
     runs-on: windows-latest
     steps:
