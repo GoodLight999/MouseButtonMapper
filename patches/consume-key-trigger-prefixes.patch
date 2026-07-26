@@ -1,0 +1,77 @@
+--- a/main.go
++++ b/main.go
+@@ -2061,6 +2061,9 @@ func (a *App) handleKeyEvent(vk uint32, isDown bool) bool {
+ 		return false
+ 	}
+ 	rule, ok := a.findBestTriggerLocked(it)
++	if ok && len(rule.Input) > 1 {
++		a.markPrefixesConsumedLocked(rule)
++	}
+ 	if ok && rule.LongPressEnabled {
+ 		started := a.startLongPressLocked(rule, it)
+ 		a.mu.Unlock()
+--- /dev/null
++++ b/joycon_key_prefix_windows_test.go
+@@ -0,0 +1,70 @@
++//go:build windows
++
++package main
++
++import "testing"
++
++func TestKeyboardTriggerConsumesJoyConPrefix(t *testing.T) {
++	app := newKeyboardPrefixTestApp(Rule{
++		Enabled: true,
++		Input: []Item{
++			{Kind: "JoyCon", Code: "ZL"},
++			{Kind: "Key", Code: "R"},
++		},
++		Output: []Item{{Kind: "Key", Code: "A"}},
++	})
++	app.joyConDown["ZL"] = true
++
++	app.handleKeyEvent('R', true)
++	if !app.joyConConsumed["ZL"] {
++		t.Fatal("Joy-Con prefix was not marked consumed by a keyboard-triggered combination")
++	}
++}
++
++func TestKeyboardTriggerConsumesMousePrefix(t *testing.T) {
++	app := newKeyboardPrefixTestApp(Rule{
++		Enabled: true,
++		Input: []Item{
++			{Kind: "Mouse", Code: "X1"},
++			{Kind: "Key", Code: "R"},
++		},
++		Output: []Item{{Kind: "Key", Code: "A"}},
++	})
++	app.mouseDown["X1"] = true
++
++	app.handleKeyEvent('R', true)
++	if !app.consumedPrefix["X1"] {
++		t.Fatal("mouse prefix was not marked consumed by a keyboard-triggered combination")
++	}
++}
++
++func newKeyboardPrefixTestApp(rule Rule) *App {
++	return &App{
++		enabled:          true,
++		rules:            []Rule{rule},
++		mouseDown:        map[string]bool{},
++		mouseDownAt:      map[string]time.Time{},
++		keyDown:          map[uint32]bool{},
++		joyConDown:       map[string]bool{},
++		joyConPending:    map[string]bool{},
++		joyConConsumed:   map[string]bool{},
++		joyConHoldRules:  map[string]Rule{},
++		pendingTap:       map[string]bool{},
++		consumedPrefix:   map[string]bool{},
++		suppressedDown:   map[string]bool{},
++		longPress:        map[string]*longPressState{},
++		recordHeld:       map[string]bool{},
++		actionCh:         make(chan outputJob, 4),
++		shutdownCh:       make(chan struct{}),
++		configSaveCh:     make(chan []byte, 1),
++		joyConOutputRefs: map[uint32]joyConOutputReference{},
++	}
++}
