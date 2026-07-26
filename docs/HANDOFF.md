@@ -12,6 +12,7 @@
 - RC版: `8.4.0-rc1`
 - Joy-Conブランチの起点: `3126d531cff93c519bdf3634847d553033787940`
 - 自動試験が全緑になった実装基準commit: `74679f72791b09137fda107d8422851c535ec7b1`
+- exact-head RC成果物を初回検証したcommit: `858f6348c26a32a509da5fc9b52961e4e19cb685`
 
 過去スレッドのZIP、ローカル派生版、`trash`／archived資料を正本として参照してはいけません。`main`と明示された作業ブランチだけを使用します。
 
@@ -37,7 +38,7 @@
 
 ### 自動検証済み
 
-基準commit `74679f7…`で次が成功しています。
+実装基準commit `74679f7…`とexact-head RC commit `858f634…`で次が成功しています。
 
 - `gofmt`
 - 公開リポジトリ監査
@@ -47,6 +48,19 @@
 - Windows `go vet -unsafeptr=false ./...`
 - Windows GUI EXEビルド
 - portable ZIP生成
+- 単体EXE、portable ZIP、source ZIP、外部SHA-256一覧の生成
+- 外部SHA-256再計算との一致
+- portable ZIP内部EXEと単体EXEのバイト一致
+- source ZIPのcommit表記とCI head SHAの一致
+
+RC成果物名は次の4点です。
+
+- `MouseButtonMapper-v8.4.0-rc1.exe`
+- `MouseButtonMapper-v8.4.0-rc1-windows-x64.zip`
+- `MouseButtonMapper-v8.4.0-rc1-source.zip`
+- `MouseButtonMapper-v8.4.0-rc1-SHA256SUMS.txt`
+
+CIはPull Requestの一時merge refではなく、`github.event.pull_request.head.sha`を明示checkoutして成果物を作ります。source ZIP先頭のcommit表記がPR headと一致しなければ配布してはいけません。
 
 ### 未完了・マージ禁止理由
 
@@ -134,7 +148,7 @@
 
 - `Config.Version`は9。
 - Joy-Con設定は各`Profile`のoptionalフィールドです。
-- Effective profileの変更時にJoy-Con設定も同時に切り替えます。
+- Effective profileの変更時にJoy-Con㨨定も同時に切り替えます。
 - ルールの保存・追加・削除・並べ替えだけではJoy-Conを再接続しません。
 - Joy-Con設定またはEffective profileが変わる場合だけ再検索します。
 - GUI文言は対象を明示します。
@@ -183,8 +197,9 @@
 
 ## 11. 次の作業
 
-1. v8.4.0-rc1成果物をWindows CIで生成する。
-2. ユーザーへEXE、portable ZIP、source ZIP、SHA-256を渡す。
-3. `docs/REGRESSION_CHECKLIST.md`に沿って実機結果を記録する。
-4. 実機不具合を同じブランチで修正し、RC番号を更新する。
+1. ユーザーへRCのEXE、portable ZIP、source ZIP、SHA-256を渡す。
+2. `docs/REGRESSION_CHECKLIST.md`に沿ってJoy-Con（L）実機結果を記録する。
+3. 実機不具合を同じブランチで修正し、必要なら`rc2`へ更新する。
+4. Bluetooth、切断・再接続、スリープ、ゲーム同時操作、1時間入力、8時間常駐を完了する。
 5. 全必須項目完了後だけ`8.4.0`へ版更新し、PRをReadyにしてマージする。
+6. `main`上の最終commitへ`v8.4.0`タグを付け、GitHub Releaseを発行する。
