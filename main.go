@@ -1624,6 +1624,14 @@ func (a *App) effectiveProfileIDLocked() string {
 }
 
 func (a *App) rebuildRulesLocked() {
+	a.rebuildRulesLockedWithJoyConRescan(true)
+}
+
+func (a *App) rebuildRulesWithoutJoyConRescanLocked() {
+	a.rebuildRulesLockedWithJoyConRescan(false)
+}
+
+func (a *App) rebuildRulesLockedWithJoyConRescan(rescanJoyCon bool) {
 	idx := a.profileIndexByIDLocked(a.effectiveProfileIDLocked())
 	if idx < 0 {
 		idx = 0
@@ -1631,7 +1639,9 @@ func (a *App) rebuildRulesLocked() {
 	if idx >= len(a.config.Profiles) {
 		a.activeProfileIndex = 0
 		a.rules = nil
-		a.requestJoyConRescanLocked()
+		if rescanJoyCon {
+			a.requestJoyConRescanLocked()
+		}
 		return
 	}
 	a.activeProfileIndex = idx
@@ -1651,7 +1661,9 @@ func (a *App) rebuildRulesLocked() {
 		rules = append(rules, r)
 	}
 	a.rules = rules
-	a.requestJoyConRescanLocked()
+	if rescanJoyCon {
+		a.requestJoyConRescanLocked()
+	}
 }
 
 func (a *App) activeProfileNameLocked() string {
@@ -3452,7 +3464,7 @@ func (a *App) handleRuleListCellClick(row, col int) bool {
 		}
 	}
 	err := a.saveConfigLocked()
-	a.rebuildRulesLocked()
+	a.rebuildRulesWithoutJoyConRescanLocked()
 	a.postUIRefreshLocked()
 	a.mu.Unlock()
 	if err != nil {
@@ -3512,7 +3524,7 @@ func (a *App) updateSelectedFlagsFromEditor() {
 		r.SuppressPrefix = false
 	}
 	err := a.saveConfigLocked()
-	a.rebuildRulesLocked()
+	a.rebuildRulesWithoutJoyConRescanLocked()
 	a.postUIRefreshLocked()
 	a.mu.Unlock()
 	if err != nil {
@@ -3887,7 +3899,7 @@ func (a *App) finishRecordingAuto() {
 	}
 	(*rules)[idx] = updated
 	err := a.saveConfigLocked()
-	a.rebuildRulesLocked()
+	a.rebuildRulesWithoutJoyConRescanLocked()
 	reset()
 	a.mu.Unlock()
 	if err != nil {
@@ -3974,7 +3986,7 @@ func (a *App) saveSelectedRuleFromEditor() {
 	r.LongPressOutput = append([]Item(nil), (*rules)[idx].LongPressOutput...)
 	(*rules)[idx] = r
 	err = a.saveConfigLocked()
-	a.rebuildRulesLocked()
+	a.rebuildRulesWithoutJoyConRescanLocked()
 	a.postUIRefreshLocked()
 	a.mu.Unlock()
 	if err != nil {
@@ -3995,7 +4007,7 @@ func (a *App) addRule() {
 	*rules = append(*rules, r)
 	idx := len(*rules) - 1
 	err := a.saveConfigLocked()
-	a.rebuildRulesLocked()
+	a.rebuildRulesWithoutJoyConRescanLocked()
 	a.postUIRefreshLocked()
 	a.mu.Unlock()
 	if err != nil {
@@ -4021,7 +4033,7 @@ func (a *App) duplicateRule() {
 	insert := idx + 1
 	*rules = append((*rules)[:insert], append([]Rule{r}, (*rules)[insert:]...)...)
 	err := a.saveConfigLocked()
-	a.rebuildRulesLocked()
+	a.rebuildRulesWithoutJoyConRescanLocked()
 	a.postUIRefreshLocked()
 	a.mu.Unlock()
 	if err != nil {
@@ -4047,7 +4059,7 @@ func (a *App) deleteSelectedRule() {
 		idx = len(*rules) - 1
 	}
 	err := a.saveConfigLocked()
-	a.rebuildRulesLocked()
+	a.rebuildRulesWithoutJoyConRescanLocked()
 	a.postUIRefreshLocked()
 	a.mu.Unlock()
 	if err != nil {
@@ -4091,7 +4103,7 @@ func (a *App) moveSelectedRuleTo(target int) {
 	newRules := append(without[:target], append([]Rule{r}, without[target:]...)...)
 	*rules = newRules
 	err := a.saveConfigLocked()
-	a.rebuildRulesLocked()
+	a.rebuildRulesWithoutJoyConRescanLocked()
 	a.postUIRefreshLocked()
 	a.mu.Unlock()
 	if err != nil {
@@ -4188,7 +4200,7 @@ func (a *App) moveSelectedRule(delta int) {
 	}
 	(*rules)[idx], (*rules)[ni] = (*rules)[ni], (*rules)[idx]
 	err := a.saveConfigLocked()
-	a.rebuildRulesLocked()
+	a.rebuildRulesWithoutJoyConRescanLocked()
 	a.postUIRefreshLocked()
 	a.mu.Unlock()
 	if err != nil {
@@ -4338,7 +4350,7 @@ func (a *App) setSelectedRuleEnabled(enabled bool) {
 	}
 	a.config.Profiles[a.activeProfileIndex].Rules[idx].Enabled = enabled
 	err := a.saveConfigLocked()
-	a.rebuildRulesLocked()
+	a.rebuildRulesWithoutJoyConRescanLocked()
 	a.postUIRefreshLocked()
 	a.mu.Unlock()
 	if err != nil {
@@ -5073,7 +5085,7 @@ func (a *App) webToggleRuleCell(idx int, field string) error {
 	if err := a.saveConfigLocked(); err != nil {
 		return err
 	}
-	a.rebuildRulesLocked()
+	a.rebuildRulesWithoutJoyConRescanLocked()
 	return nil
 }
 
@@ -5143,7 +5155,7 @@ func (a *App) webSaveRule(req ruleReq) error {
 	if err := a.saveConfigLocked(); err != nil {
 		return err
 	}
-	a.rebuildRulesLocked()
+	a.rebuildRulesWithoutJoyConRescanLocked()
 	return nil
 }
 
@@ -5159,7 +5171,7 @@ func (a *App) webAddRule() error {
 	if err := a.saveConfigLocked(); err != nil {
 		return err
 	}
-	a.rebuildRulesLocked()
+	a.rebuildRulesWithoutJoyConRescanLocked()
 	return nil
 }
 
@@ -5176,7 +5188,7 @@ func (a *App) webDuplicateRule(idx int) error {
 	if err := a.saveConfigLocked(); err != nil {
 		return err
 	}
-	a.rebuildRulesLocked()
+	a.rebuildRulesWithoutJoyConRescanLocked()
 	return nil
 }
 
@@ -5191,7 +5203,7 @@ func (a *App) webDeleteRule(idx int) error {
 	if err := a.saveConfigLocked(); err != nil {
 		return err
 	}
-	a.rebuildRulesLocked()
+	a.rebuildRulesWithoutJoyConRescanLocked()
 	return nil
 }
 
@@ -5223,7 +5235,7 @@ func (a *App) webMoveRule(idx, target, delta int) error {
 	if err := a.saveConfigLocked(); err != nil {
 		return err
 	}
-	a.rebuildRulesLocked()
+	a.rebuildRulesWithoutJoyConRescanLocked()
 	return nil
 }
 
