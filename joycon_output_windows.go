@@ -251,7 +251,7 @@ func joyConMouseTapInputs(code string) ([]INPUT, bool) {
 	case "WheelUp":
 		return []INPUT{makeJoyConMouseInput(uint32(joyConWheelDelta), joyConMouseEventWheel)}, true
 	case "WheelDown":
-		return []INPUT{makeJoyConMouseInput(uint32(int32(-joyConWheelDelta)), joyConMouseEventWheel)}, true
+		return []INPUT{makeJoyConMouseInput(uint32(0)-uint32(joyConWheelDelta), joyConMouseEventWheel)}, true
 	default:
 		return nil, false
 	}
