@@ -1,0 +1,36 @@
+name: Apply Joy-Con pending I/O cancellation
+
+on:
+  push:
+    branches: [feature/joycon-l]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: feature/joycon-l
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: false
+      - shell: pwsh
+        run: |
+          git apply --check patches/cancel-joycon-io.patch
+          git apply patches/cancel-joycon-io.patch
+          gofmt -w joycon_hid_windows.go joycon_cancelio_windows.go
+          go test ./...
+      - shell: pwsh
+        run: git rm patches/cancel-joycon-io.patch .github/workflows/apply-cancel-joycon-io.yml
+      - shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- '*.go'
+          git commit -m "fix: cancel pending Joy-Con HID I/O before close"
+          git push origin HEAD:feature/joycon-l
