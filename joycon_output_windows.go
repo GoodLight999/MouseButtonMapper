@@ -150,8 +150,8 @@ func (a *App) sendJoyConTapOutput(items []Item) {
 	inputs := make([]INPUT, 0, len(keys)*2+len(mouseActions))
 	pressedByUs := make([]uint32, 0, len(keys))
 	for _, vk := range keys {
-		if isModifier(vk) && a.physicalKeyDown(vk) {
-			// Borrow a physically-held modifier; never synthesize its UP.
+		if !joyConShouldInjectTapKey(a.physicalKeyDown(vk)) {
+			// Borrow any physically-held key; never synthesize its UP.
 			continue
 		}
 		inputs = append(inputs, makeKeyInput(vk, false))
@@ -212,7 +212,7 @@ func (a *App) sendJoyConHeldKeys(items []Item, down bool) {
 		ref.Count--
 		if ref.Count == 0 {
 			delete(a.joyConOutputRefs, vk)
-			if ref.Owned {
+			if joyConShouldReleaseOwnedKey(ref, a.physicalKeyDown(vk)) {
 				inputs = append(inputs, makeKeyInput(vk, true))
 			}
 		} else {
@@ -224,12 +224,20 @@ func (a *App) sendJoyConHeldKeys(items []Item, down bool) {
 
 func (a *App) appendJoyConHeldReleaseInputs(inputs []INPUT) []INPUT {
 	for vk, ref := range a.joyConOutputRefs {
-		if ref.Count > 0 && ref.Owned {
+		if ref.Count > 0 && joyConShouldReleaseOwnedKey(ref, a.physicalKeyDown(vk)) {
 			inputs = append(inputs, makeKeyInput(vk, true))
 		}
 	}
 	clear(a.joyConOutputRefs)
 	return inputs
+}
+
+func joyConShouldInjectTapKey(physicalDown bool) bool {
+	return !physicalDown
+}
+
+func joyConShouldReleaseOwnedKey(ref joyConOutputReference, physicalDown bool) bool {
+	return ref.Owned && !physicalDown
 }
 
 func (a *App) physicalKeyDown(vk uint32) bool {
