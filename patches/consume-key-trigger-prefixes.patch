@@ -145,7 +145,7 @@
 +set /p MBM_COMMIT=<"%TEMP%\mbm-commit.txt"
 +"%REAL_GIT%" update-ref HEAD %MBM_COMMIT% %MBM_PARENT%
 +if errorlevel 1 exit /b %ERRORLEVEL%
-+"%REAL_GIT%" push origin HEAD:feature/joycon-l
++"%REAL_GIT%" push origin HEAD:refs/heads/ci/verified-key-prefix-output
 +if errorlevel 1 exit /b %ERRORLEVEL%
 +echo pushed>"%MBM_DONE%"
 +
