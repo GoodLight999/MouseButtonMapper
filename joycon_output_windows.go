@@ -99,10 +99,10 @@ func (a *App) sendJoyConRuleOutput(rule Rule) {
 }
 
 func (a *App) sendJoyConTapOutput(items []Item) {
-	modifiers := make([]uint32, 0, len(items))
-	actions := make([]INPUT, 0, len(items)*2)
+	keys := make([]uint32, 0, len(items))
+	mouseActions := make([]INPUT, 0, len(items)*2)
 	unsupported := make([]string, 0)
-	seenModifiers := make(map[uint32]bool)
+	seenKeys := make(map[uint32]bool)
 
 	for _, item := range items {
 		if strings.EqualFold(item.Kind, "Key") {
@@ -113,13 +113,11 @@ func (a *App) sendJoyConTapOutput(items []Item) {
 			}
 			if isModifier(vk) {
 				vk = normalizeModifier(vk)
-				if !seenModifiers[vk] {
-					modifiers = append(modifiers, vk)
-					seenModifiers[vk] = true
-				}
-				continue
 			}
-			actions = append(actions, makeKeyInput(vk, false), makeKeyInput(vk, true))
+			if !seenKeys[vk] {
+				keys = append(keys, vk)
+				seenKeys[vk] = true
+			}
 			continue
 		}
 		if strings.EqualFold(item.Kind, "Mouse") {
@@ -128,7 +126,7 @@ func (a *App) sendJoyConTapOutput(items []Item) {
 				unsupported = append(unsupported, item.Kind+":"+item.Code)
 				continue
 			}
-			actions = append(actions, mouseInputs...)
+			mouseActions = append(mouseActions, mouseInputs...)
 			continue
 		}
 		unsupported = append(unsupported, item.Kind+":"+item.Code)
@@ -136,7 +134,7 @@ func (a *App) sendJoyConTapOutput(items []Item) {
 	if len(unsupported) > 0 {
 		a.logf("unsupported output ignored: %v", unsupported)
 	}
-	if len(actions) == 0 && len(modifiers) == 0 {
+	if len(keys) == 0 && len(mouseActions) == 0 {
 		return
 	}
 
@@ -146,16 +144,20 @@ func (a *App) sendJoyConTapOutput(items []Item) {
 		return
 	}
 
-	inputs := make([]INPUT, 0, len(actions)+len(modifiers)*2)
-	pressedByUs := make([]uint32, 0, len(modifiers))
-	for _, vk := range modifiers {
-		if a.physicalKeyDown(vk) {
+	// All injected keys are pressed before any mouse action and released in
+	// reverse order. This preserves Ctrl+R and also supports A+B as a true
+	// simultaneous chord instead of two sequential taps.
+	inputs := make([]INPUT, 0, len(keys)*2+len(mouseActions))
+	pressedByUs := make([]uint32, 0, len(keys))
+	for _, vk := range keys {
+		if isModifier(vk) && a.physicalKeyDown(vk) {
+			// Borrow a physically-held modifier; never synthesize its UP.
 			continue
 		}
 		inputs = append(inputs, makeKeyInput(vk, false))
 		pressedByUs = append(pressedByUs, vk)
 	}
-	inputs = append(inputs, actions...)
+	inputs = append(inputs, mouseActions...)
 	for i := len(pressedByUs) - 1; i >= 0; i-- {
 		inputs = append(inputs, makeKeyInput(pressedByUs[i], true))
 	}
