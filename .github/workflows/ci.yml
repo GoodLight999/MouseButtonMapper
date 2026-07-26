@@ -75,7 +75,7 @@ jobs:
           retention-days: 30
 
   apply-rule-rebuild:
-    if: github.ref == 'refs/heads/feature/joycon-l'
+    if: github.event_name == 'pull_request' && github.head_ref == 'feature/joycon-l'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
