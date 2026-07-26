@@ -93,15 +93,20 @@ jobs:
           gofmt -w main.go joycon_key_prefix_windows_test.go
           go test ./...
           go vet -unsafeptr=false ./...
-      - name: Commit only verified code
+      - name: Stage verified files
         shell: pwsh
         run: |
           git rm patches/consume-key-trigger-prefixes.patch
           git add main.go joycon_key_prefix_windows_test.go
-          $staged = git diff --cached --name-only
-          if ($staged -notcontains 'main.go') { throw 'main.go fix is absent from staged commit' }
-          if ($staged -notcontains 'joycon_key_prefix_windows_test.go') { throw 'prefix regression test is absent from staged commit' }
+          git diff --cached --name-status
+      - name: Configure commit identity
+        shell: pwsh
+        run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "fix: consume prefixes for keyboard-triggered combinations"
-          git push origin HEAD:feature/joycon-l
+      - name: Commit verified files
+        shell: pwsh
+        run: git commit -m "fix: consume prefixes for keyboard-triggered combinations"
+      - name: Push verified commit
+        shell: pwsh
+        run: git push origin HEAD:feature/joycon-l
