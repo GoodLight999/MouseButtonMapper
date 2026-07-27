@@ -24,12 +24,20 @@ jobs:
           go-version-file: go.mod
           cache: false
       - name: Reconstruct and verify rc2 patch
+        id: verify
         shell: pwsh
         run: |
-          $parts = Get-ChildItem patches\rc2-controller-patch\*.part | Sort-Object Name
+          $partDir = 'patches\rc2-controller-patch'
+          if (-not (Test-Path $partDir)) {
+            'apply=false' | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            Write-Host 'RC2 payload is already absent; nothing to apply.'
+            exit 0
+          }
+          $parts = Get-ChildItem "$partDir\*.part" | Sort-Object Name
           if ($parts.Count -ne 9) {
             throw "Expected 9 patch parts, got $($parts.Count)"
           }
+          'apply=true' | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           $base64 = ($parts | ForEach-Object { Get-Content $_.FullName -Raw }) -join ''
           $archive = Join-Path $env:RUNNER_TEMP 'mbm-rc2.patch.gz'
           [IO.File]::WriteAllBytes($archive, [Convert]::FromBase64String($base64))
@@ -54,9 +62,10 @@ jobs:
           go vet -unsafeptr=false ./...
           git diff --check
       - name: Commit verified rc2 product tree
+        if: steps.verify.outputs.apply == 'true'
         shell: pwsh
         run: |
-          git rm -r patches/rc2-controller-patch patches/rc2-controller-compat .github/workflows/apply-rc2-controller-compat.yml
+          git rm -r --ignore-unmatch patches/rc2-controller-patch patches/rc2-controller-compat
           git add -A
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
