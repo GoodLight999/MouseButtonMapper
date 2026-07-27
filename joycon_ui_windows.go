@@ -15,7 +15,7 @@ let joyState=null;
 let mainState=null;
 let joyDirty=false;
 let joyBusy=0;
-let lastEditorProfile='';
+let lastEditorProfile=-1;
 
 window.fetch=async function(input,init){
   const url=typeof input==='string'?input:(input&&input.url)||'';
@@ -33,8 +33,8 @@ window.fetch=async function(input,init){
     response.clone().json().then(state=>{
       mainState=state;
       setTimeout(()=>renderRuleMode(state),0);
-      if(state&&state.editorProfileName!==lastEditorProfile){
-        lastEditorProfile=state.editorProfileName||'';
+      if(state&&Number(state.activeProfile)!==lastEditorProfile){
+        lastEditorProfile=Number(state.activeProfile);
         joyDirty=false;
         loadJoyCon();
       }
@@ -69,7 +69,7 @@ function injectPanel(){
   '<label class="checkline"><input type="checkbox" id="joyReconnect"> 切断後に自動再接続する</label><div class="field"><label for="joyReconnectMs">再検索間隔</label><div class="row"><input id="joyReconnectMs" type="number" min="250" max="10000" step="250"><span>ms</span></div></div>'+
   '<div class="field"><label for="joyDeadZone">デッドゾーン</label><input id="joyDeadZone" type="number" min="0.05" max="0.90" step="0.01"></div><div class="field"><label for="joyReleaseZone">解放判定</label><input id="joyReleaseZone" type="number" min="0.01" max="0.89" step="0.01"><small>デッドゾーンより小さくします。</small></div>'+
   '<div class="field"><label for="joyDirectionMode">方向判定</label><select id="joyDirectionMode"><option value="4">4方向</option><option value="8">8方向（斜め入力）</option></select></div><div class="row"><label class="checkline"><input type="checkbox" id="joyInvertX"> X軸反転</label><label class="checkline"><input type="checkbox" id="joyInvertY"> Y軸反転</label></div>'+
-  '<div class="statusbox joy-full"><div class="main">キャリブレーション状態</div><div class="detail" id="joyCalibrationText">未実行</div></div></div><div class="joy-buttons"><button type="button" id="joySave" class="primary large">スティック設定を保存</button><button type="button" id="joyCalStart">キャリブレーションを開始</button><button type="button" id="joyCalFinish">キャリブレーション結果を保存</button><button type="button" id="joyCalCancel">キャリブレーションを中止</button></div></div></div>';
+  '<div class="statusbox joy-full"><div class="main">キャリブレーション状態</div><div class="detail" id="joyCalibrationText">未実行</div></div></div><div class="joy-buttons"><button type="button" id="joySave" class="primary large">Joy-Con接続・スティック設定を保存</button><button type="button" id="joyCalStart">キャリブレーションを開始</button><button type="button" id="joyCalFinish">キャリブレーション結果を保存</button><button type="button" id="joyCalCancel">キャリブレーションを中止</button></div></div></div>';
   ruleSection.parentNode.insertBefore(panel,ruleSection);
 
   const title=ruleSection.querySelector('.section-title');
@@ -175,7 +175,7 @@ function renderJoyCon(){
   byId('joyStatusText').textContent=joyState.statusText||'未接続';
   byId('joyErrorText').textContent=status.LastError||'';
   const device=status.Device||{};
-  byId('joyDeviceText').textContent=device.Product||device.Serial||device.Fingerprint||'―';
+  byId('joyDeviceText').textContent=[device.Product,device.Serial&&('Serial '+device.Serial),device.Fingerprint&&('ID '+device.Fingerprint)].filter(Boolean).join(' / ')||'―';
   byId('joyBatteryText').textContent=Number(status.BatteryPercent)>=0?(status.BatteryPercent+'%'+(status.Charging?'・充電中':'')):'取得できません';
   byId('joyLastInputText').textContent=joyState.lastInputText||'―';
   const x=Number(status.StickX)||0;

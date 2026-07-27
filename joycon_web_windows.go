@@ -11,6 +11,7 @@ import (
 )
 
 type joyConWebState struct {
+	ProfileIndex      int                    `json:"profileIndex"`
 	ProfileName       string                 `json:"profileName"`
 	Enabled           bool                   `json:"enabled"`
 	PreferredDevice   string                 `json:"preferredDevice"`
@@ -41,9 +42,11 @@ func (a *App) buildJoyConWebState() joyConWebState {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	config := defaultJoyConProfileConfig()
+	profileIndex := -1
 	profileName := "（プロファイルなし）"
 	if a.editorProfileIndex >= 0 && a.editorProfileIndex < len(a.config.Profiles) {
 		profile := a.config.Profiles[a.editorProfileIndex]
+		profileIndex = a.editorProfileIndex
 		profileName = profile.Name
 		config = normalizeJoyConProfileConfig(profile.JoyCon)
 	}
@@ -60,6 +63,7 @@ func (a *App) buildJoyConWebState() joyConWebState {
 		}
 	}
 	return joyConWebState{
+		ProfileIndex:      profileIndex,
 		ProfileName:       profileName,
 		Enabled:           config.Enabled,
 		PreferredDevice:   config.PreferredDevice,
@@ -100,7 +104,7 @@ func (a *App) webAPIJoyCon(w http.ResponseWriter, r *http.Request) {
 		message = "Joy-Conを再検索しています。"
 	case "save-stick":
 		err = a.saveJoyConWebSettings(req)
-		message = "スティック設定を保存しました。"
+		message = "Joy-Con接続・スティック設定を保存しました。"
 	case "calibration-start":
 		err = a.startJoyConCalibration()
 		message = "キャリブレーションを開始しました。中心で静止した後、全方向へゆっくり倒してください。"
@@ -163,7 +167,11 @@ func (a *App) startJoyConCalibration() error {
 	if !a.joyConStatus.Connected {
 		return fmt.Errorf("Joy-Con（L）が接続されていません。先に「Joy-Conを接続・再検索」を実行してください。")
 	}
+	if a.editorProfileIndex < 0 || a.editorProfileIndex >= len(a.config.Profiles) {
+		return fmt.Errorf("キャリブレーションを保存するプロファイルがありません。")
+	}
 	a.joyConCalibration = newJoyConCalibrationSession()
+	a.joyConCalibration.profileID = a.config.Profiles[a.editorProfileIndex].Id
 	a.joyConCalibrationActive = true
 	a.joyConCalibrationMessage = "中心で静止した後、スティックを全方向へゆっくり倒してください。"
 	return nil
@@ -180,19 +188,20 @@ func (a *App) finishJoyConCalibration() error {
 		a.joyConCalibrationMessage = err.Error()
 		return err
 	}
-	if a.editorProfileIndex < 0 || a.editorProfileIndex >= len(a.config.Profiles) {
-		return fmt.Errorf("キャリブレーションを保存するプロファイルがありません。")
+	profileIndex := a.profileIndexByIDLocked(a.joyConCalibration.profileID)
+	if profileIndex < 0 {
+		return fmt.Errorf("キャリブレーション開始時のプロファイルが削除されています。結果は保存していません。")
 	}
-	config := normalizeJoyConProfileConfig(a.config.Profiles[a.editorProfileIndex].JoyCon)
+	config := normalizeJoyConProfileConfig(a.config.Profiles[profileIndex].JoyCon)
 	config.Stick.Calibration = calibration
-	a.config.Profiles[a.editorProfileIndex].JoyCon = config
+	a.config.Profiles[profileIndex].JoyCon = config
 	a.joyConCalibrationActive = false
 	a.joyConCalibration = nil
-	a.joyConCalibrationMessage = "完了: 中心値と可動範囲を保存しました。"
+	a.joyConCalibrationMessage = "完了: 開始時に選択していたプロファイルへ中心値と可動範囲を保存しました。"
 	if err := a.saveConfigLocked(); err != nil {
 		return err
 	}
-	if a.editorProfileIndex == a.activeProfileIndex {
+	if profileIndex == a.activeProfileIndex {
 		a.requestJoyConRescanLocked()
 	}
 	return nil

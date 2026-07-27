@@ -131,6 +131,7 @@ func (a *App) stopJoyConSubsystem() {
 	a.mu.Lock()
 	cancel := a.joyConCancel
 	done := a.joyConDone
+	a.joyConWorker = nil
 	a.joyConCancel = nil
 	a.joyConDone = nil
 	a.mu.Unlock()

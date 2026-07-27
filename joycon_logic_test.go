@@ -49,14 +49,28 @@ func TestParseJoyConSubcommandReplyUsesStandardState(t *testing.T) {
 	}
 }
 
-func TestParseJoyConSimpleHat(t *testing.T) {
-	report := []byte{joyConReportSimple, 0, 0, 1}
+func TestParseJoyConSimpleReportSeparatesButtonsAndStickHat(t *testing.T) {
+	report := []byte{
+		joyConReportSimple,
+		(1 << 0) | (1 << 4) | (1 << 5),
+		(1 << 0) | (1 << 2) | (1 << 5) | (1 << 6) | (1 << 7),
+		1,
+	}
 	state, err := parseJoyConInputReport(report)
 	if err != nil {
 		t.Fatalf("parseJoyConInputReport: %v", err)
 	}
-	if !state.Buttons[JoyConButtonUp] || !state.Buttons[JoyConButtonRight] {
-		t.Fatalf("hat was not decoded as up-right: %#v", state.Buttons)
+	for _, button := range []JoyConButton{
+		JoyConButtonDown, JoyConButtonSL, JoyConButtonSR,
+		JoyConButtonMinus, JoyConButtonStick, JoyConButtonCapture, JoyConButtonL, JoyConButtonZL,
+		JoyConStickUp, JoyConStickRight,
+	} {
+		if !state.Buttons[button] {
+			t.Errorf("simple report did not decode %s: %#v", button, state.Buttons)
+		}
+	}
+	if state.Buttons[JoyConButtonUp] || state.Buttons[JoyConButtonRight] {
+		t.Fatalf("stick hat leaked into physical direction buttons: %#v", state.Buttons)
 	}
 	if state.BatteryPercent != -1 {
 		t.Fatalf("simple report battery=%d", state.BatteryPercent)
@@ -74,6 +88,26 @@ func TestParseJoyConReportErrors(t *testing.T) {
 		if _, err := parseJoyConInputReport(report); err == nil {
 			t.Errorf("report %#v unexpectedly succeeded", report)
 		}
+	}
+}
+
+func TestDiffJoyConButtonSetsReleasesBeforePresses(t *testing.T) {
+	at := time.Unix(123, 0)
+	events := diffJoyConButtonSets(
+		"left-a",
+		map[JoyConButton]bool{JoyConStickLeft: true},
+		map[JoyConButton]bool{JoyConStickRight: true},
+		at,
+		false,
+	)
+	if len(events) != 2 {
+		t.Fatalf("events=%#v", events)
+	}
+	if events[0].Token.Code != string(JoyConStickLeft) || events[0].Down {
+		t.Fatalf("first event=%+v, want StickLeft UP", events[0])
+	}
+	if events[1].Token.Code != string(JoyConStickRight) || !events[1].Down {
+		t.Fatalf("second event=%+v, want StickRight DOWN", events[1])
 	}
 }
 

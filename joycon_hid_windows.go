@@ -334,6 +334,11 @@ func (s *JoyConHIDSession) Close() error {
 	if s == nil || !s.closed.CompareAndSwap(false, true) {
 		return nil
 	}
+	// Serialize handle invalidation with WriteReport. ReadFile is interrupted by
+	// CancelIoEx below, while a concurrent WriteFile must finish before the
+	// underlying handle is closed.
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	handle := s.handle.Swap(0)
 	if handle == 0 {
 		return nil

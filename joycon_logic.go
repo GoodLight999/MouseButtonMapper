@@ -143,7 +143,9 @@ func parseJoyConInputReport(report []byte) (JoyConRawState, error) {
 			return JoyConRawState{}, fmt.Errorf("Joy-Con simple report is too short: %d", len(report))
 		}
 		// Report 0x3f is an OS-compatible fallback. On an individual Joy-Con,
-		// the analog bytes are filler; the hat still gives reliable directions.
+		// bytes 1-2 expose physical buttons while the hat in byte 3 represents
+		// the analog stick direction. The analog-axis bytes are filler.
+		parseJoyConSimpleButtons(state.Buttons, report[1], report[2])
 		parseJoyConSimpleHat(state.Buttons, report[3]&0x0f)
 		return state, nil
 
@@ -167,15 +169,30 @@ func parseJoyConStandardButtons(dst map[JoyConButton]bool, shared, left byte) {
 	setJoyConButton(dst, JoyConButtonZL, left&(1<<7) != 0)
 }
 
+func parseJoyConSimpleButtons(dst map[JoyConButton]bool, buttons1, buttons2 byte) {
+	setJoyConButton(dst, JoyConButtonDown, buttons1&(1<<0) != 0)
+	setJoyConButton(dst, JoyConButtonRight, buttons1&(1<<1) != 0)
+	setJoyConButton(dst, JoyConButtonLeft, buttons1&(1<<2) != 0)
+	setJoyConButton(dst, JoyConButtonUp, buttons1&(1<<3) != 0)
+	setJoyConButton(dst, JoyConButtonSL, buttons1&(1<<4) != 0)
+	setJoyConButton(dst, JoyConButtonSR, buttons1&(1<<5) != 0)
+
+	setJoyConButton(dst, JoyConButtonMinus, buttons2&(1<<0) != 0)
+	setJoyConButton(dst, JoyConButtonStick, buttons2&(1<<2) != 0)
+	setJoyConButton(dst, JoyConButtonCapture, buttons2&(1<<5) != 0)
+	setJoyConButton(dst, JoyConButtonL, buttons2&(1<<6) != 0)
+	setJoyConButton(dst, JoyConButtonZL, buttons2&(1<<7) != 0)
+}
+
 func parseJoyConSimpleHat(dst map[JoyConButton]bool, hat byte) {
 	up := hat == 0 || hat == 1 || hat == 7
 	right := hat == 1 || hat == 2 || hat == 3
 	down := hat == 3 || hat == 4 || hat == 5
 	left := hat == 5 || hat == 6 || hat == 7
-	setJoyConButton(dst, JoyConButtonUp, up)
-	setJoyConButton(dst, JoyConButtonRight, right)
-	setJoyConButton(dst, JoyConButtonDown, down)
-	setJoyConButton(dst, JoyConButtonLeft, left)
+	setJoyConButton(dst, JoyConStickUp, up)
+	setJoyConButton(dst, JoyConStickRight, right)
+	setJoyConButton(dst, JoyConStickDown, down)
+	setJoyConButton(dst, JoyConStickLeft, left)
 }
 
 func setJoyConButton(dst map[JoyConButton]bool, button JoyConButton, down bool) {
@@ -471,6 +488,7 @@ func diffJoyConButtonSets(sourceID string, previous, next map[JoyConButton]bool,
 }
 
 type JoyConCalibrationSession struct {
+	profileID  string
 	minX       uint16
 	maxX       uint16
 	minY       uint16

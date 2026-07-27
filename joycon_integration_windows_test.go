@@ -265,7 +265,7 @@ func TestJoyConUIIsHookedIntoEmbeddedWebApp(t *testing.T) {
 		"Joy-Conを接続・再検索",
 		"Joy-Con入力を記録",
 		"選択中の割り当てへJoy-Con入力を設定",
-		"スティック設定を保存",
+		"Joy-Con接続・スティック設定を保存",
 		"キャリブレーションを開始",
 		"選択中の割り当てを保存",
 		"joyRuleMode",
