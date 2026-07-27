@@ -61,7 +61,7 @@ func TestParseJoyConSimpleReportSeparatesButtonsAndStickHat(t *testing.T) {
 		t.Fatalf("parseJoyConInputReport: %v", err)
 	}
 	for _, button := range []JoyConButton{
-		JoyConButtonDown, JoyConButtonSL, JoyConButtonSR,
+		JoyConButtonLeft, JoyConButtonSL, JoyConButtonSR,
 		JoyConButtonMinus, JoyConButtonStick, JoyConButtonCapture, JoyConButtonL, JoyConButtonZL,
 		JoyConStickUp, JoyConStickRight,
 	} {
@@ -108,6 +108,23 @@ func TestDiffJoyConButtonSetsReleasesBeforePresses(t *testing.T) {
 	}
 	if events[1].Token.Code != string(JoyConStickRight) || !events[1].Down {
 		t.Fatalf("second event=%+v, want StickRight DOWN", events[1])
+	}
+}
+
+func TestDiffJoyConButtonSetsReleasesBeforeAlphabeticallyEarlierPress(t *testing.T) {
+	at := time.Unix(124, 0)
+	events := diffJoyConButtonSets(
+		"left-a",
+		map[JoyConButton]bool{JoyConButtonZL: true},
+		map[JoyConButton]bool{JoyConButtonL: true},
+		at,
+		false,
+	)
+	if len(events) != 2 || events[0].Down || !events[1].Down {
+		t.Fatalf("events=%#v", events)
+	}
+	if events[0].Token.Code != string(JoyConButtonZL) || events[1].Token.Code != string(JoyConButtonL) {
+		t.Fatalf("release/press order=%#v", events)
 	}
 }
 
@@ -333,4 +350,52 @@ func hasJoyConEvent(events []InputEvent, button JoyConButton, down bool) bool {
 		}
 	}
 	return false
+}
+
+func TestParseJoyConInputOnlyReport(t *testing.T) {
+	report := []byte{
+		(1 << 4) | (1 << 5) | (1 << 6) | (1 << 7),
+		(1 << 0) | (1 << 2) | (1 << 5),
+		1,
+		255, 0,
+		128, 128,
+	}
+	state, err := parseJoyConInputOnlyReport(report)
+	if err != nil {
+		t.Fatalf("parseJoyConInputOnlyReport: %v", err)
+	}
+	for _, button := range []JoyConButton{
+		JoyConButtonL, JoyConButtonSR, JoyConButtonZL, JoyConButtonSL,
+		JoyConButtonMinus, JoyConButtonStick, JoyConButtonCapture,
+		JoyConButtonUp, JoyConButtonRight,
+	} {
+		if !state.Buttons[button] {
+			t.Errorf("input-only report did not decode %s: %#v", button, state.Buttons)
+		}
+	}
+	if state.StickX != 4095 || state.StickY != 4095 {
+		t.Fatalf("input-only stick=(%d,%d)", state.StickX, state.StickY)
+	}
+}
+
+func TestParseJoyConInputOnlyReportAcceptsLeadingZeroReportID(t *testing.T) {
+	report := []byte{0, 0, 0, 8, 128, 128, 128, 128}
+	state, err := parseJoyConInputOnlyReport(report)
+	if err != nil {
+		t.Fatalf("parseJoyConInputOnlyReport: %v", err)
+	}
+	if len(state.Buttons) != 0 {
+		t.Fatalf("unexpected buttons=%#v", state.Buttons)
+	}
+	if state.StickX < 2030 || state.StickX > 2070 || state.StickY < 2030 || state.StickY > 2070 {
+		t.Fatalf("center stick=(%d,%d)", state.StickX, state.StickY)
+	}
+}
+
+func TestParseJoyConInputOnlyReportRejectsLongUnknownPackets(t *testing.T) {
+	report := make([]byte, 64)
+	report[0] = 0x01
+	if _, err := parseJoyConInputOnlyReport(report); err == nil {
+		t.Fatal("long arbitrary HID packet was misclassified as Switch input-only")
+	}
 }

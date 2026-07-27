@@ -58,8 +58,8 @@ func validateJoyConHoldRule(rule Rule) error {
 	if rule.LongPressEnabled {
 		return fmt.Errorf("Holdモードと長押しは同じ割り当てでは併用できません")
 	}
-	if len(rule.Input) != 1 || !strings.EqualFold(rule.Input[0].Kind, "JoyCon") {
-		return fmt.Errorf("HoldモードはJoy-Con単独入力にだけ設定できます")
+	if len(rule.Input) != 1 || !isControllerInputKind(rule.Input[0].Kind) {
+		return fmt.Errorf("HoldモードはJoy-ConまたはXInputの単独入力にだけ設定できます")
 	}
 	if len(rule.Output) == 0 {
 		return fmt.Errorf("Holdモードには保持するキーが必要です")

@@ -14,6 +14,12 @@ const (
 	maxJoyConReconnectMs     = 10000
 	joyConOutputReportLength = 49
 	joyConInputReportLength  = 64
+	joyConProProductID       = 0x2009
+	joyConTypeLeft           = 0x01
+
+	hidUsagePageGenericDesktop = 0x01
+	hidUsageJoystick           = 0x04
+	hidUsageGamePad            = 0x05
 )
 
 type JoyConReconnectConfig struct {
@@ -54,17 +60,55 @@ func normalizeJoyConProfileConfig(config JoyConProfileConfig) JoyConProfileConfi
 }
 
 type JoyConDeviceInfo struct {
-	Path        string `json:"-"`
-	Fingerprint string `json:"Fingerprint"`
-	VendorID    uint16 `json:"VendorId"`
-	ProductID   uint16 `json:"ProductId"`
-	Version     uint16 `json:"Version,omitempty"`
-	Product     string `json:"Product,omitempty"`
-	Serial      string `json:"Serial,omitempty"`
+	Path               string `json:"-"`
+	Fingerprint        string `json:"Fingerprint"`
+	VendorID           uint16 `json:"VendorId"`
+	ProductID          uint16 `json:"ProductId"`
+	Version            uint16 `json:"Version,omitempty"`
+	Product            string `json:"Product,omitempty"`
+	Serial             string `json:"Serial,omitempty"`
+	ControllerType     uint8  `json:"ControllerType,omitempty"`
+	UsagePage          uint16 `json:"UsagePage,omitempty"`
+	Usage              uint16 `json:"Usage,omitempty"`
+	InputReportLength  uint16 `json:"InputReportLength,omitempty"`
+	OutputReportLength uint16 `json:"OutputReportLength,omitempty"`
+	InputOnly          bool   `json:"InputOnly,omitempty"`
+	ForcedCompatible   bool   `json:"ForcedCompatible,omitempty"`
 }
 
 func (d JoyConDeviceInfo) IsLeftJoyCon() bool {
-	return d.VendorID == joyConNintendoVendorID && d.ProductID == joyConLeftProductID
+	return d.ControllerType == joyConTypeLeft ||
+		(d.VendorID == joyConNintendoVendorID && d.ProductID == joyConLeftProductID) ||
+		isExplicitLeftJoyConProduct(d.Product)
+}
+
+func (d JoyConDeviceInfo) MightBeLeftJoyCon() bool {
+	return d.IsLeftJoyCon() ||
+		(d.VendorID == joyConNintendoVendorID && d.ProductID == joyConProProductID)
+}
+
+func (d JoyConDeviceInfo) IsGameControllerCollection() bool {
+	return d.UsagePage == hidUsagePageGenericDesktop &&
+		(d.Usage == hidUsageJoystick || d.Usage == hidUsageGamePad)
+}
+
+func (d JoyConDeviceInfo) CanOpenAsCompatibleJoyCon() bool {
+	return d.IsLeftJoyCon() || d.ForcedCompatible
+}
+
+func shouldOpenJoyConInputOnly(device JoyConDeviceInfo) bool {
+	// Zero report lengths mean HID caps were unavailable, not that the device
+	// cannot accept output. Keep known Joy-Con devices on the normal R/W path.
+	return device.InputOnly || device.ForcedCompatible ||
+		(device.OutputReportLength > 0 && device.OutputReportLength < joyConOutputReportLength) ||
+		(device.InputReportLength > 0 && device.InputReportLength <= 8)
+}
+
+func isExplicitLeftJoyConProduct(product string) bool {
+	name := strings.ToLower(strings.NewReplacer(" ", "", "-", "", "_", "").Replace(product))
+	return strings.Contains(name, "joycon(l)") ||
+		strings.Contains(name, "joyconleft") ||
+		strings.Contains(name, "leftjoycon")
 }
 
 func (d JoyConDeviceInfo) StableID() string {
@@ -77,23 +121,38 @@ func (d JoyConDeviceInfo) StableID() string {
 	return fmt.Sprintf("vid:%04x:pid:%04x", d.VendorID, d.ProductID)
 }
 
+func (d JoyConDeviceInfo) DisplayName() string {
+	name := strings.TrimSpace(d.Product)
+	if name == "" {
+		name = "HID game controller"
+	}
+	return fmt.Sprintf("%s (VID %04x / PID %04x / ID %s)", name, d.VendorID, d.ProductID, d.StableID())
+}
+
 func fingerprintJoyConDevicePath(path string) string {
 	sum := sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(path))))
 	return hex.EncodeToString(sum[:8])
 }
 
+func matchesPreferredJoyConDevice(device JoyConDeviceInfo, preferred string) bool {
+	preferred = strings.TrimSpace(preferred)
+	return strings.EqualFold(device.StableID(), preferred) ||
+		strings.EqualFold(device.Serial, preferred) ||
+		strings.EqualFold(device.Fingerprint, preferred)
+}
+
 func chooseJoyConDevice(devices []JoyConDeviceInfo, preferred string) (JoyConDeviceInfo, bool) {
-	preferred = strings.ToLower(strings.TrimSpace(preferred))
+	preferred = strings.TrimSpace(preferred)
 	if preferred != "" {
 		for _, device := range devices {
-			if !device.IsLeftJoyCon() {
+			if !matchesPreferredJoyConDevice(device, preferred) {
 				continue
 			}
-			if strings.EqualFold(device.StableID(), preferred) ||
-				strings.EqualFold(device.Serial, preferred) ||
-				strings.EqualFold(device.Fingerprint, preferred) {
-				return device, true
+			if !device.IsGameControllerCollection() && !device.MightBeLeftJoyCon() {
+				continue
 			}
+			device.ForcedCompatible = !device.IsLeftJoyCon()
+			return device, true
 		}
 	}
 	for _, device := range devices {
@@ -105,18 +164,19 @@ func chooseJoyConDevice(devices []JoyConDeviceInfo, preferred string) (JoyConDev
 }
 
 type JoyConConnectionStatus struct {
-	Connected      bool             `json:"Connected"`
-	Device         JoyConDeviceInfo `json:"Device"`
-	BatteryPercent int              `json:"BatteryPercent"`
-	Charging       bool             `json:"Charging"`
-	LastInput      string           `json:"LastInput,omitempty"`
-	LastReportAt   time.Time        `json:"LastReportAt,omitempty"`
-	LastError      string           `json:"LastError,omitempty"`
-	ReconnectCount uint64           `json:"ReconnectCount"`
-	RawStickX      uint16           `json:"RawStickX"`
-	RawStickY      uint16           `json:"RawStickY"`
-	StickX         float64          `json:"StickX"`
-	StickY         float64          `json:"StickY"`
+	Connected      bool               `json:"Connected"`
+	Device         JoyConDeviceInfo   `json:"Device"`
+	Candidates     []JoyConDeviceInfo `json:"Candidates,omitempty"`
+	BatteryPercent int                `json:"BatteryPercent"`
+	Charging       bool               `json:"Charging"`
+	LastInput      string             `json:"LastInput,omitempty"`
+	LastReportAt   time.Time          `json:"LastReportAt,omitempty"`
+	LastError      string             `json:"LastError,omitempty"`
+	ReconnectCount uint64             `json:"ReconnectCount"`
+	RawStickX      uint16             `json:"RawStickX"`
+	RawStickY      uint16             `json:"RawStickY"`
+	StickX         float64            `json:"StickX"`
+	StickY         float64            `json:"StickY"`
 }
 
 func buildJoyConSubcommandReport(packet byte, subcommand byte, data []byte) ([]byte, error) {
@@ -130,6 +190,22 @@ func buildJoyConSubcommandReport(packet byte, subcommand byte, data []byte) ([]b
 	report[10] = subcommand
 	copy(report[11:], data)
 	return report, nil
+}
+
+func buildJoyConDeviceInfoCommand(packet byte) ([]byte, error) {
+	return buildJoyConSubcommandReport(packet, 0x02, nil)
+}
+
+func parseJoyConControllerTypeReply(report []byte) (uint8, bool) {
+	// 0x21 + controller state (12 bytes) + ACK + subcommand +
+	// firmware major/minor + controller type.
+	if len(report) < 18 || report[0] != joyConReportSubcommandReply {
+		return 0, false
+	}
+	if report[13]&0x80 == 0 || report[14] != 0x02 {
+		return 0, false
+	}
+	return report[17], true
 }
 
 func buildJoyConFullReportModeCommand(packet byte) ([]byte, error) {

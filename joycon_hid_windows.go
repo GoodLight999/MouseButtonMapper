@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -29,10 +30,13 @@ var (
 	joyConSetupAPIDLL = syscall.NewLazyDLL("setupapi.dll")
 	joyConKernel32DLL = syscall.NewLazyDLL("kernel32.dll")
 
-	joyConHidDGetHidGuid       = joyConHIDDLL.NewProc("HidD_GetHidGuid")
-	joyConHidDGetAttributes    = joyConHIDDLL.NewProc("HidD_GetAttributes")
-	joyConHidDGetProductString = joyConHIDDLL.NewProc("HidD_GetProductString")
-	joyConHidDGetSerialString  = joyConHIDDLL.NewProc("HidD_GetSerialNumberString")
+	joyConHidDGetHidGuid        = joyConHIDDLL.NewProc("HidD_GetHidGuid")
+	joyConHidDGetAttributes     = joyConHIDDLL.NewProc("HidD_GetAttributes")
+	joyConHidDGetProductString  = joyConHIDDLL.NewProc("HidD_GetProductString")
+	joyConHidDGetSerialString   = joyConHIDDLL.NewProc("HidD_GetSerialNumberString")
+	joyConHidDGetPreparsedData  = joyConHIDDLL.NewProc("HidD_GetPreparsedData")
+	joyConHidDFreePreparsedData = joyConHIDDLL.NewProc("HidD_FreePreparsedData")
+	joyConHidPGetCaps           = joyConHIDDLL.NewProc("HidP_GetCaps")
 
 	joyConSetupDiGetClassDevs             = joyConSetupAPIDLL.NewProc("SetupDiGetClassDevsW")
 	joyConSetupDiEnumDeviceInterfaces     = joyConSetupAPIDLL.NewProc("SetupDiEnumDeviceInterfaces")
@@ -66,6 +70,27 @@ type joyConHIDDAttributes struct {
 	VersionNumber uint16
 }
 
+type joyConHIDPCaps struct {
+	Usage                     uint16
+	UsagePage                 uint16
+	InputReportByteLength     uint16
+	OutputReportByteLength    uint16
+	FeatureReportByteLength   uint16
+	Reserved                  [17]uint16
+	NumberLinkCollectionNodes uint16
+	NumberInputButtonCaps     uint16
+	NumberInputValueCaps      uint16
+	NumberInputDataIndices    uint16
+	NumberOutputButtonCaps    uint16
+	NumberOutputValueCaps     uint16
+	NumberOutputDataIndices   uint16
+	NumberFeatureButtonCaps   uint16
+	NumberFeatureValueCaps    uint16
+	NumberFeatureDataIndices  uint16
+}
+
+const joyConHIDPStatusSuccess = 0x00110000
+
 func EnumerateJoyConHIDDevices() ([]JoyConDeviceInfo, error) {
 	var classGUID joyConGUID
 	joyConHidDGetHidGuid.Call(uintptr(unsafe.Pointer(&classGUID)))
@@ -81,17 +106,11 @@ func EnumerateJoyConHIDDevices() ([]JoyConDeviceInfo, error) {
 	}
 	defer joyConSetupDiDestroyDeviceInfoList.Call(deviceInfoSet)
 
-	devices := make([]JoyConDeviceInfo, 0, 2)
+	devices := make([]JoyConDeviceInfo, 0, 4)
 	for index := uint32(0); ; index++ {
-		interfaceData := joyConDeviceInterfaceData{
-			CbSize: uint32(unsafe.Sizeof(joyConDeviceInterfaceData{})),
-		}
+		interfaceData := joyConDeviceInterfaceData{CbSize: uint32(unsafe.Sizeof(joyConDeviceInterfaceData{}))}
 		ok, _, enumErr := joyConSetupDiEnumDeviceInterfaces.Call(
-			deviceInfoSet,
-			0,
-			uintptr(unsafe.Pointer(&classGUID)),
-			uintptr(index),
-			uintptr(unsafe.Pointer(&interfaceData)),
+			deviceInfoSet, 0, uintptr(unsafe.Pointer(&classGUID)), uintptr(index), uintptr(unsafe.Pointer(&interfaceData)),
 		)
 		if ok == 0 {
 			if errno, ok := enumErr.(syscall.Errno); ok && errno == joyConErrorNoMoreItems {
@@ -105,8 +124,19 @@ func EnumerateJoyConHIDDevices() ([]JoyConDeviceInfo, error) {
 			continue
 		}
 		info, err := inspectJoyConHIDPath(path)
-		if err != nil || !info.IsLeftJoyCon() {
+		if err != nil {
 			continue
+		}
+		// Keep only top-level joystick/gamepad collections plus explicit Nintendo
+		// identities. This exposes compatible clones for manual selection without
+		// ever probing keyboards, mice, consumer controls, or vendor-only HID nodes.
+		if !info.IsGameControllerCollection() && !info.MightBeLeftJoyCon() {
+			continue
+		}
+		if !info.IsLeftJoyCon() && info.VendorID == joyConNintendoVendorID && info.ProductID == joyConProProductID {
+			if controllerType, probeErr := probeJoyConControllerType(path); probeErr == nil && controllerType == joyConTypeLeft {
+				info.ControllerType = controllerType
+			}
 		}
 		devices = append(devices, info)
 	}
@@ -167,7 +197,7 @@ func inspectJoyConHIDPath(path string) (JoyConDeviceInfo, error) {
 		return JoyConDeviceInfo{}, joyConWindowsCallError("HidD_GetAttributes", callErr)
 	}
 
-	return JoyConDeviceInfo{
+	info := JoyConDeviceInfo{
 		Path:        path,
 		Fingerprint: fingerprintJoyConDevicePath(path),
 		VendorID:    attributes.VendorID,
@@ -175,7 +205,100 @@ func inspectJoyConHIDPath(path string) (JoyConDeviceInfo, error) {
 		Version:     attributes.VersionNumber,
 		Product:     joyConHIDString(joyConHidDGetProductString, handle),
 		Serial:      joyConHIDString(joyConHidDGetSerialString, handle),
-	}, nil
+	}
+	if caps, capsErr := joyConHIDCaps(handle); capsErr == nil {
+		info.UsagePage = caps.UsagePage
+		info.Usage = caps.Usage
+		info.InputReportLength = caps.InputReportByteLength
+		info.OutputReportLength = caps.OutputReportByteLength
+	}
+	if (info.VendorID == joyConNintendoVendorID && info.ProductID == joyConLeftProductID) || isExplicitLeftJoyConProduct(info.Product) {
+		info.ControllerType = joyConTypeLeft
+	}
+	return info, nil
+}
+
+func joyConHIDCaps(handle uintptr) (joyConHIDPCaps, error) {
+	var preparsed uintptr
+	ok, _, callErr := joyConHidDGetPreparsedData.Call(handle, uintptr(unsafe.Pointer(&preparsed)))
+	if ok == 0 || preparsed == 0 {
+		return joyConHIDPCaps{}, joyConWindowsCallError("HidD_GetPreparsedData", callErr)
+	}
+	defer joyConHidDFreePreparsedData.Call(preparsed)
+	var caps joyConHIDPCaps
+	status, _, _ := joyConHidPGetCaps.Call(preparsed, uintptr(unsafe.Pointer(&caps)))
+	if uint32(status) != joyConHIDPStatusSuccess {
+		return joyConHIDPCaps{}, fmt.Errorf("HidP_GetCaps failed: status=0x%08x", uint32(status))
+	}
+	return caps, nil
+}
+
+type joyConProbeResult struct {
+	controllerType uint8
+	err            error
+}
+
+func probeJoyConControllerType(path string) (uint8, error) {
+	handle, err := openJoyConWindowsHandle(path, joyConGenericRead|joyConGenericWrite)
+	if err != nil {
+		return 0, err
+	}
+	defer closeJoyConWindowsHandle(handle)
+	report, err := buildJoyConDeviceInfoCommand(0)
+	if err != nil {
+		return 0, err
+	}
+	var written uint32
+	ok, _, callErr := joyConWriteFile.Call(
+		handle,
+		uintptr(unsafe.Pointer(&report[0])),
+		uintptr(len(report)),
+		uintptr(unsafe.Pointer(&written)),
+		0,
+	)
+	if ok == 0 {
+		return 0, joyConWindowsCallError("WriteFile device-info probe", callErr)
+	}
+	if int(written) != len(report) {
+		return 0, fmt.Errorf("Joy-Con device-info probe wrote %d of %d bytes", written, len(report))
+	}
+
+	resultCh := make(chan joyConProbeResult, 1)
+	go func() {
+		buffer := make([]byte, joyConInputReportLength)
+		for {
+			var read uint32
+			ok, _, readErr := joyConReadFile.Call(
+				handle,
+				uintptr(unsafe.Pointer(&buffer[0])),
+				uintptr(len(buffer)),
+				uintptr(unsafe.Pointer(&read)),
+				0,
+			)
+			if ok == 0 {
+				resultCh <- joyConProbeResult{err: joyConWindowsCallError("ReadFile device-info probe", readErr)}
+				return
+			}
+			if controllerType, matched := parseJoyConControllerTypeReply(buffer[:read]); matched {
+				resultCh <- joyConProbeResult{controllerType: controllerType}
+				return
+			}
+		}
+	}()
+
+	timer := time.NewTimer(200 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case result := <-resultCh:
+		return result.controllerType, result.err
+	case <-timer.C:
+		_ = cancelJoyConPendingIO(handle)
+		select {
+		case <-resultCh:
+		case <-time.After(100 * time.Millisecond):
+		}
+		return 0, errors.New("Joy-Con device-info probe timed out")
+	}
 }
 
 func joyConHIDString(proc *syscall.LazyProc, handle uintptr) string {
@@ -218,25 +341,37 @@ func closeJoyConWindowsHandle(handle uintptr) {
 }
 
 type JoyConHIDSession struct {
-	device  JoyConDeviceInfo
-	handle  atomic.Uintptr
-	closed  atomic.Bool
-	packet  atomic.Uint32
-	writeMu sync.Mutex
+	device    JoyConDeviceInfo
+	handle    atomic.Uintptr
+	closed    atomic.Bool
+	packet    atomic.Uint32
+	inputOnly atomic.Bool
+	writeMu   sync.Mutex
 }
 
 func OpenJoyConHIDSession(device JoyConDeviceInfo) (*JoyConHIDSession, error) {
-	if !device.IsLeftJoyCon() {
-		return nil, fmt.Errorf("device is not a Joy-Con (L): vid=%04x pid=%04x", device.VendorID, device.ProductID)
+	if !device.CanOpenAsCompatibleJoyCon() {
+		return nil, fmt.Errorf("device is not an approved Joy-Con-compatible controller: vid=%04x pid=%04x", device.VendorID, device.ProductID)
 	}
 	if device.Path == "" {
 		return nil, errors.New("Joy-Con HID device path is empty")
 	}
-	handle, err := openJoyConWindowsHandle(device.Path, joyConGenericRead|joyConGenericWrite)
+	inputOnly := shouldOpenJoyConInputOnly(device)
+	access := uintptr(joyConGenericRead | joyConGenericWrite)
+	if inputOnly {
+		access = joyConGenericRead
+	}
+	handle, err := openJoyConWindowsHandle(device.Path, access)
+	if err != nil && access != joyConGenericRead {
+		handle, err = openJoyConWindowsHandle(device.Path, joyConGenericRead)
+		inputOnly = err == nil
+	}
 	if err != nil {
 		return nil, err
 	}
+	device.InputOnly = inputOnly
 	session := &JoyConHIDSession{device: device}
+	session.inputOnly.Store(inputOnly)
 	session.handle.Store(handle)
 	return session, nil
 }
@@ -252,12 +387,25 @@ func (s *JoyConHIDSession) SetFullReportMode() error {
 	if s == nil || s.closed.Load() {
 		return errJoyConSessionClosed
 	}
+	if s.inputOnly.Load() || (s.device.OutputReportLength > 0 && s.device.OutputReportLength < joyConOutputReportLength) {
+		s.inputOnly.Store(true)
+		s.device.InputOnly = true
+		return nil
+	}
 	packet := byte(s.packet.Add(1) - 1)
 	report, err := buildJoyConFullReportModeCommand(packet)
 	if err != nil {
 		return err
 	}
-	return s.WriteReport(report)
+	if err := s.WriteReport(report); err != nil {
+		// SDL supports a class of third-party Switch controllers that only expose
+		// simple input reports. Continue in read-only-compatible mode instead of
+		// rejecting a controller that may already be streaming report 0x3f.
+		s.inputOnly.Store(true)
+		s.device.InputOnly = true
+		return nil
+	}
+	return nil
 }
 
 func (s *JoyConHIDSession) WriteReport(report []byte) error {
@@ -301,7 +449,14 @@ func (s *JoyConHIDSession) ReadReport() ([]byte, error) {
 		return nil, errJoyConSessionClosed
 	}
 
-	buffer := make([]byte, joyConInputReportLength)
+	reportLength := int(s.device.InputReportLength)
+	if reportLength <= 0 {
+		reportLength = joyConInputReportLength
+	}
+	if reportLength > 1024 {
+		return nil, fmt.Errorf("Joy-Con-compatible input report is too large: %d", reportLength)
+	}
+	buffer := make([]byte, reportLength)
 	var read uint32
 	ok, _, callErr := joyConReadFile.Call(
 		handle,
@@ -327,7 +482,32 @@ func (s *JoyConHIDSession) ReadState() (JoyConRawState, error) {
 	if err != nil {
 		return JoyConRawState{}, err
 	}
-	return parseJoyConInputReport(report)
+	if len(report) > 0 {
+		switch report[0] {
+		case joyConReportFull, joyConReportSubcommandReply, joyConReportSimple:
+			return parseJoyConInputReport(report)
+		}
+	}
+	compactInputOnly := len(report) == 7 || (len(report) == 8 && report[0] == 0)
+	if compactInputOnly && (s.inputOnly.Load() || s.device.ForcedCompatible || s.device.InputReportLength <= 8) {
+		state, parseErr := parseJoyConInputOnlyReport(report)
+		if parseErr == nil {
+			s.inputOnly.Store(true)
+			s.device.InputOnly = true
+			return state, nil
+		}
+	}
+	return JoyConRawState{}, fmt.Errorf("unsupported Joy-Con-compatible HID report (%d bytes): % x", len(report), reportPrefix(report, 16))
+}
+
+func reportPrefix(report []byte, limit int) []byte {
+	if limit < 0 {
+		limit = 0
+	}
+	if len(report) > limit {
+		return report[:limit]
+	}
+	return report
 }
 
 func (s *JoyConHIDSession) Close() error {

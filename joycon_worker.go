@@ -137,9 +137,10 @@ func (w *JoyConWorker) Run(ctx context.Context) error {
 			continue
 		}
 
-		device, err := w.findDevice(config.PreferredDevice)
+		device, candidates, err := w.findDevice(config.PreferredDevice)
 		if err != nil {
 			w.completeRescanAttempt()
+			w.publishCandidates(candidates)
 			w.publishFailure(err)
 			if !w.waitAfterFailure(ctx, config) {
 				return nil
@@ -147,9 +148,11 @@ func (w *JoyConWorker) Run(ctx context.Context) error {
 			continue
 		}
 
+		w.publishCandidates(candidates)
 		transport, err := w.backend.Open(device)
 		if err != nil {
 			w.completeRescanAttempt()
+			w.publishCandidates(candidates)
 			w.publishFailure(err)
 			if !w.waitAfterFailure(ctx, config) {
 				return nil
@@ -197,16 +200,29 @@ func (w *JoyConWorker) waitAfterFailure(ctx context.Context, config JoyConProfil
 	return w.waitForRetry(ctx, config.Reconnect.IntervalMs)
 }
 
-func (w *JoyConWorker) findDevice(preferred string) (JoyConDeviceInfo, error) {
+func (w *JoyConWorker) findDevice(preferred string) (JoyConDeviceInfo, []JoyConDeviceInfo, error) {
 	devices, err := w.backend.Enumerate()
 	if err != nil {
-		return JoyConDeviceInfo{}, fmt.Errorf("enumerate Joy-Con HID devices: %w", err)
+		return JoyConDeviceInfo{}, nil, fmt.Errorf("enumerate Joy-Con HID devices: %w", err)
 	}
 	device, ok := chooseJoyConDevice(devices, preferred)
 	if !ok {
-		return JoyConDeviceInfo{}, errors.New("Joy-Con (L) is not connected")
+		if len(devices) == 0 {
+			return JoyConDeviceInfo{}, devices, errors.New("Joy-Con (L) or compatible HID gamepad is not connected")
+		}
+		names := make([]string, 0, len(devices))
+		for _, candidate := range devices {
+			names = append(names, candidate.DisplayName())
+		}
+		return JoyConDeviceInfo{}, devices, fmt.Errorf("Joy-Con (L) was not identified automatically; select a compatible candidate: %s", strings.Join(names, "; "))
 	}
-	return device, nil
+	return device, devices, nil
+}
+
+func (w *JoyConWorker) publishCandidates(candidates []JoyConDeviceInfo) {
+	status := w.Status()
+	status.Candidates = append([]JoyConDeviceInfo(nil), candidates...)
+	w.publishStatus(status)
 }
 
 type joyConReadResult struct {
@@ -239,11 +255,13 @@ func (w *JoyConWorker) runConnected(ctx context.Context, transport JoyConTranspo
 		}
 	}()
 
+	previousStatus := w.Status()
 	status := JoyConConnectionStatus{
 		Connected:      true,
 		Device:         device,
+		Candidates:     append([]JoyConDeviceInfo(nil), previousStatus.Candidates...),
 		BatteryPercent: -1,
-		ReconnectCount: w.Status().ReconnectCount + 1,
+		ReconnectCount: previousStatus.ReconnectCount + 1,
 	}
 	w.publishStatus(status)
 

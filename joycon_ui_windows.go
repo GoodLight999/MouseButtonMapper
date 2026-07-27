@@ -61,11 +61,11 @@ function injectPanel(){
   panel.id='joyConSection';
   panel.className='section';
   panel.innerHTML='<div class="section-head"><div><div class="section-title">Joy-Con（L）</div><div class="section-help">選択中のプロファイルへJoy-Con設定を保存し、既存のマウス・キーボード割り当てと同じルールで使用します。</div></div></div>'+
-  '<div class="section-body joy-grid"><div class="subpanel"><div class="subpanel-title">接続と入力状態</div><div class="statusbox"><div class="main" id="joyStatusText">状態を取得中</div><div class="detail" id="joyErrorText"></div></div><div class="joy-metrics" style="margin-top:10px">'+
+  '<div class="section-body joy-grid"><div class="subpanel"><div class="subpanel-title">接続と入力状態</div><div class="statusbox"><div class="main" id="joyStatusText">状態を取得中</div><div class="detail" id="joyErrorText"></div></div><div class="statusbox" style="margin-top:8px"><div class="main" id="xInputStatusText">XInput状態を取得中</div><div class="detail" id="xInputLastText">最後の入力: ―</div></div><div class="joy-metrics" style="margin-top:10px">'+
   '<div class="metric"><div class="k">検出したJoy-Con</div><div class="v" id="joyDeviceText">―</div></div><div class="metric"><div class="k">バッテリー残量</div><div class="v" id="joyBatteryText">―</div></div><div class="metric"><div class="k">最後に検出したJoy-Con入力</div><div class="v" id="joyLastInputText">―</div></div><div class="metric"><div class="k">スティック現在位置</div><div class="v joy-value" id="joyPositionText">X 0.000 / Y 0.000</div></div></div>'+
-  '<div class="joy-stick" aria-label="Joy-Conスティック現在位置"><div class="joy-stick-dead" id="joyDeadCircle"></div><div class="joy-stick-dot" id="joyStickDot"></div></div><div class="joy-buttons"><button type="button" id="joyRescan">Joy-Conを接続・再検索</button><button type="button" id="joyRecord" class="record">● Joy-Con入力を記録</button><button type="button" id="joyAssignLast">選択中の割り当てへJoy-Con入力を設定</button></div></div>'+
+  '<div class="joy-stick" aria-label="Joy-Conスティック現在位置"><div class="joy-stick-dead" id="joyDeadCircle"></div><div class="joy-stick-dot" id="joyStickDot"></div></div><div class="joy-buttons"><button type="button" id="joyRescan">Joy-Conを接続・再検索</button><button type="button" id="joyRecord" class="record">● ゲームコントローラー入力を記録</button><button type="button" id="joyAssignLast">選択中の割り当てへ最後のコントローラー入力を設定</button></div></div>'+
   '<div class="subpanel"><div class="subpanel-title">選択中のプロファイルのJoy-Con設定</div><div class="muted" id="joyProfileText">―</div><div class="joy-settings" style="margin-top:10px">'+
-  '<label class="checkline joy-full"><input type="checkbox" id="joyEnabled"> このプロファイルでJoy-Con（L）を使用する</label><div class="field joy-full"><label for="joyPreferredDevice">優先するJoy-Con識別子</label><input id="joyPreferredDevice" type="text" placeholder="空欄なら最初に検出したJoy-Con（L）"><small>通常は空欄で構いません。複数台を区別する場合だけ指定します。</small></div>'+
+  '<label class="checkline joy-full"><input type="checkbox" id="joyEnabled"> このプロファイルでJoy-Con（L）を使用する</label><div class="field joy-full"><label for="joyPreferredDevice">優先するJoy-Con／互換HID識別子</label><input id="joyPreferredDevice" type="text" list="joyDeviceOptions" placeholder="純正は空欄／互換品は候補から選択"><datalist id="joyDeviceOptions"></datalist><small>純正Joy-Conは通常空欄で構いません。自動判定できない互換品は、検出候補のIDを選んで保存してください。</small></div>'+
   '<label class="checkline"><input type="checkbox" id="joyReconnect"> 切断後に自動再接続する</label><div class="field"><label for="joyReconnectMs">再検索間隔</label><div class="row"><input id="joyReconnectMs" type="number" min="250" max="10000" step="250"><span>ms</span></div></div>'+
   '<div class="field"><label for="joyDeadZone">デッドゾーン</label><input id="joyDeadZone" type="number" min="0.05" max="0.90" step="0.01"></div><div class="field"><label for="joyReleaseZone">解放判定</label><input id="joyReleaseZone" type="number" min="0.01" max="0.89" step="0.01"><small>デッドゾーンより小さくします。</small></div>'+
   '<div class="field"><label for="joyDirectionMode">方向判定</label><select id="joyDirectionMode"><option value="4">4方向</option><option value="8">8方向（斜め入力）</option></select></div><div class="row"><label class="checkline"><input type="checkbox" id="joyInvertX"> X軸反転</label><label class="checkline"><input type="checkbox" id="joyInvertY"> Y軸反転</label></div>'+
@@ -73,7 +73,7 @@ function injectPanel(){
   ruleSection.parentNode.insertBefore(panel,ruleSection);
 
   const title=ruleSection.querySelector('.section-title');
-  if(title)title.textContent='マウス・キーボード・Joy-Conの割り当て';
+  if(title)title.textContent='マウス・キーボード・ゲームコントローラーの割り当て';
   const editorTitle=[...ruleSection.querySelectorAll('.subpanel-title')].find(e=>e.textContent.includes('マウス割り当て'));
   if(editorTitle)editorTitle.textContent='選択中の割り当てを編集';
   const save=byId('saveRule');
@@ -90,7 +90,7 @@ function injectRuleMode(){
   if(!input||!output)return;
   const field=document.createElement('div');
   field.className='field';
-  field.innerHTML='<label for="joyRuleMode">実行方式</label><select id="joyRuleMode"><option value="Tap">押して離したときに1回実行</option><option value="Hold">押している間、出力キーを保持</option></select><small>HoldはJoy-Con単独入力からキーボードキーを保持する場合に使用します。</small>';
+  field.innerHTML='<label for="joyRuleMode">実行方式</label><select id="joyRuleMode"><option value="Tap">押して離したときに1回実行</option><option value="Hold">押している間、出力キーを保持</option></select><small>HoldはJoy-ConまたはXInputの単独入力からキーボードキーを保持する場合に使用します。</small>';
   output.parentElement.parentNode.insertBefore(field,output.parentElement);
   byId('joyRuleMode').addEventListener('change',()=>{
     if(byId('joyRuleMode').value==='Hold'){
@@ -172,8 +172,21 @@ function renderJoyCon(){
   injectPanel();
   if(!joyState)return;
   const status=joyState.status||{};
-  byId('joyStatusText').textContent=joyState.statusText||'未接続';
+  byId('joyStatusText').textContent='Joy-Con: '+(joyState.statusText||'未接続');
+  byId('xInputStatusText').textContent=joyState.xInputStatusText||'XInput未初期化';
+  byId('xInputLastText').textContent='最後の入力: '+(joyState.lastControllerText||'―');
   byId('joyErrorText').textContent=status.LastError||'';
+  const candidates=Array.isArray(status.Candidates)?status.Candidates:[];
+  const options=byId('joyDeviceOptions');
+  if(options){
+    options.innerHTML='';
+    candidates.forEach(candidate=>{
+      const option=document.createElement('option');
+      option.value=candidate.Serial?('serial:'+String(candidate.Serial).toLowerCase()):('path:'+String(candidate.Fingerprint||'').toLowerCase());
+      option.label=[candidate.Product||'HID game controller','VID '+Number(candidate.VendorId||0).toString(16).padStart(4,'0'),'PID '+Number(candidate.ProductId||0).toString(16).padStart(4,'0'),'report '+(candidate.InputReportLength||'?')].join(' / ');
+      if(option.value!=='path:')options.appendChild(option);
+    });
+  }
   const device=status.Device||{};
   byId('joyDeviceText').textContent=[device.Product,device.Serial&&('Serial '+device.Serial),device.Fingerprint&&('ID '+device.Fingerprint)].filter(Boolean).join(' / ')||'―';
   byId('joyBatteryText').textContent=Number(status.BatteryPercent)>=0?(status.BatteryPercent+'%'+(status.Charging?'・充電中':'')):'取得できません';
@@ -205,11 +218,12 @@ function renderJoyCon(){
 }
 
 function assignLastInput(){
-  const code=joyState&&joyState.status&&joyState.status.LastInput;
+  const kind=joyState&&joyState.lastControllerKind;
+  const code=joyState&&joyState.lastControllerCode;
   const input=byId('ruleInput');
-  if(!code||!input){
+  if(!kind||!code||!input){
     const message=byId('message');
-    if(message){message.textContent='割り当てへ設定できるJoy-Con入力がまだありません。Joy-Conを操作してから実行してください。';message.classList.add('error')}
+    if(message){message.textContent='割り当てへ設定できるコントローラー入力がまだありません。Joy-ConまたはXInputコントローラーを操作してください。';message.classList.add('error')}
     return;
   }
   if(selectedRuleIndex()<0){
@@ -217,12 +231,12 @@ function assignLastInput(){
     if(message){message.textContent='先に割り当てを選択してください。';message.classList.add('error')}
     return;
   }
-  const token='Joy-Con '+code;
+  const token=kind==='XInput'?'XInput '+code:'Joy-Con '+code;
   const current=input.value.trim();
   input.value=current?current+' + '+token:token;
   input.dispatchEvent(new Event('input',{bubbles:true}));
   const message=byId('message');
-  if(message){message.textContent='最後のJoy-Con入力を入力欄へ反映しました。「選択中の割り当てを保存」で確定してください。';message.classList.remove('error')}
+  if(message){message.textContent='最後のコントローラー入力を入力欄へ反映しました。「選択中の割り当てを保存」で確定してください。';message.classList.remove('error')}
 }
 
 function start(){

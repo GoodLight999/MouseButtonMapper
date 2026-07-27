@@ -11,18 +11,23 @@ import (
 )
 
 type joyConWebState struct {
-	ProfileIndex      int                    `json:"profileIndex"`
-	ProfileName       string                 `json:"profileName"`
-	Enabled           bool                   `json:"enabled"`
-	PreferredDevice   string                 `json:"preferredDevice"`
-	ReconnectEnabled  bool                   `json:"reconnectEnabled"`
-	ReconnectMs       int                    `json:"reconnectMs"`
-	Stick             JoyConStickConfig      `json:"stick"`
-	Status            JoyConConnectionStatus `json:"status"`
-	StatusText        string                 `json:"statusText"`
-	LastInputText     string                 `json:"lastInputText"`
-	CalibrationActive bool                   `json:"calibrationActive"`
-	CalibrationText   string                 `json:"calibrationText"`
+	ProfileIndex       int                    `json:"profileIndex"`
+	ProfileName        string                 `json:"profileName"`
+	Enabled            bool                   `json:"enabled"`
+	PreferredDevice    string                 `json:"preferredDevice"`
+	ReconnectEnabled   bool                   `json:"reconnectEnabled"`
+	ReconnectMs        int                    `json:"reconnectMs"`
+	Stick              JoyConStickConfig      `json:"stick"`
+	Status             JoyConConnectionStatus `json:"status"`
+	StatusText         string                 `json:"statusText"`
+	XInputStatus       XInputConnectionStatus `json:"xInputStatus"`
+	XInputStatusText   string                 `json:"xInputStatusText"`
+	LastInputText      string                 `json:"lastInputText"`
+	LastControllerKind string                 `json:"lastControllerKind"`
+	LastControllerCode string                 `json:"lastControllerCode"`
+	LastControllerText string                 `json:"lastControllerText"`
+	CalibrationActive  bool                   `json:"calibrationActive"`
+	CalibrationText    string                 `json:"calibrationText"`
 }
 
 type joyConWebRequest struct {
@@ -62,19 +67,28 @@ func (a *App) buildJoyConWebState() joyConWebState {
 			calibrationText = "未実行"
 		}
 	}
+	lastControllerText := "―"
+	if a.lastControllerInput.Kind != "" {
+		lastControllerText = itemsText([]Item{a.lastControllerInput})
+	}
 	return joyConWebState{
-		ProfileIndex:      profileIndex,
-		ProfileName:       profileName,
-		Enabled:           config.Enabled,
-		PreferredDevice:   config.PreferredDevice,
-		ReconnectEnabled:  config.Reconnect.Enabled,
-		ReconnectMs:       config.Reconnect.IntervalMs,
-		Stick:             config.Stick,
-		Status:            a.joyConStatus,
-		StatusText:        a.joyConStatusTextLocked(),
-		LastInputText:     lastInputText,
-		CalibrationActive: a.joyConCalibrationActive,
-		CalibrationText:   calibrationText,
+		ProfileIndex:       profileIndex,
+		ProfileName:        profileName,
+		Enabled:            config.Enabled,
+		PreferredDevice:    config.PreferredDevice,
+		ReconnectEnabled:   config.Reconnect.Enabled,
+		ReconnectMs:        config.Reconnect.IntervalMs,
+		Stick:              config.Stick,
+		Status:             a.joyConStatus,
+		StatusText:         a.joyConStatusTextLocked(),
+		XInputStatus:       a.xInputStatus,
+		XInputStatusText:   a.xInputStatusTextLocked(),
+		LastInputText:      lastInputText,
+		LastControllerKind: a.lastControllerInput.Kind,
+		LastControllerCode: a.lastControllerInput.Code,
+		LastControllerText: lastControllerText,
+		CalibrationActive:  a.joyConCalibrationActive,
+		CalibrationText:    calibrationText,
 	}
 }
 

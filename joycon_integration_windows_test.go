@@ -71,14 +71,14 @@ func TestFindBestTriggerUsesMixedJoyConRules(t *testing.T) {
 		Output:  []Item{{Kind: "Key", Code: "A"}},
 	}
 	app := &App{
-		rules:           []Rule{singleMouse, comboMouse, comboKey},
-		mouseDown:       map[string]bool{"X1": true},
-		keyDown:         map[uint32]bool{},
-		joyConDown:      map[string]bool{"ZL": true, "L": true},
-		longPress:       map[string]*longPressState{},
-		consumedPrefix:  map[string]bool{},
-		joyConConsumed:  map[string]bool{},
-		joyConHoldRules: map[string]Rule{},
+		rules:               []Rule{singleMouse, comboMouse, comboKey},
+		mouseDown:           map[string]bool{"X1": true},
+		keyDown:             map[uint32]bool{},
+		controllerDown:      map[string]bool{"JoyCon:ZL": true, "JoyCon:L": true},
+		longPress:           map[string]*longPressState{},
+		consumedPrefix:      map[string]bool{},
+		controllerConsumed:  map[string]bool{},
+		controllerHoldRules: map[string]Rule{},
 	}
 
 	got, ok := app.findBestTriggerLocked(Item{Kind: "Mouse", Code: "X1"})
@@ -95,14 +95,14 @@ func TestFindBestTriggerUsesMixedJoyConRules(t *testing.T) {
 
 func TestPhysicalInputIdleIncludesJoyCon(t *testing.T) {
 	app := &App{
-		mouseDown:  map[string]bool{},
-		keyDown:    map[uint32]bool{},
-		joyConDown: map[string]bool{"ZL": true},
+		mouseDown:      map[string]bool{},
+		keyDown:        map[uint32]bool{},
+		controllerDown: map[string]bool{"JoyCon:ZL": true},
 	}
 	if app.physicalInputIdleLocked() {
 		t.Fatal("Joy-Con DOWN was ignored by the profile-switch boundary")
 	}
-	delete(app.joyConDown, "ZL")
+	delete(app.controllerDown, "JoyCon:ZL")
 	if !app.physicalInputIdleLocked() {
 		t.Fatal("idle state was not restored after Joy-Con UP")
 	}
@@ -263,15 +263,53 @@ func TestJoyConUIIsHookedIntoEmbeddedWebApp(t *testing.T) {
 	}
 	for _, required := range []string{
 		"Joy-Conを接続・再検索",
-		"Joy-Con入力を記録",
-		"選択中の割り当てへJoy-Con入力を設定",
+		"ゲームコントローラー入力を記録",
+		"選択中の割り当てへ最後のコントローラー入力を設定",
 		"Joy-Con接続・スティック設定を保存",
 		"キャリブレーションを開始",
 		"選択中の割り当てを保存",
+		"xInputStatusText",
+		"joyDeviceOptions",
 		"joyRuleMode",
 	} {
 		if !strings.Contains(joyConUIJS, required) {
 			t.Errorf("Joy-Con UI is missing %q", required)
 		}
+	}
+}
+
+func TestParseItemsTextAcceptsXInputAndMixedRule(t *testing.T) {
+	items, err := parseItemsText("XInput P1:LB + サイド1 + Ctrl", true, true)
+	if err != nil {
+		t.Fatalf("parseItemsText: %v", err)
+	}
+	if len(items) != 3 || !sameInput(items[0], Item{Kind: "XInput", Code: "P1:LB"}) {
+		t.Fatalf("items=%#v", items)
+	}
+	app := &App{
+		rules: []Rule{{
+			Enabled: true,
+			Input:   []Item{{Kind: "XInput", Code: "P1:LB"}, {Kind: "Mouse", Code: "X1"}},
+			Output:  []Item{{Kind: "Key", Code: "R"}},
+		}},
+		mouseDown:      map[string]bool{"X1": true},
+		keyDown:        map[uint32]bool{},
+		controllerDown: map[string]bool{"XInput:P1:LB": true},
+	}
+	rule, ok := app.findBestTriggerLocked(Item{Kind: "Mouse", Code: "X1"})
+	if !ok || len(rule.Input) != 2 {
+		t.Fatalf("XInput+mouse rule not selected: %+v ok=%v", rule, ok)
+	}
+}
+
+func TestXInputHoldRuleValidation(t *testing.T) {
+	rule := Rule{
+		Enabled: true,
+		Input:   []Item{{Kind: "XInput", Code: "P1:LStickUp"}},
+		Mode:    joyConRuleModeHold,
+		Output:  []Item{{Kind: "Key", Code: "W"}},
+	}
+	if err := validateJoyConHoldRule(rule); err != nil {
+		t.Fatalf("valid XInput Hold rule rejected: %v", err)
 	}
 }

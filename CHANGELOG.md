@@ -1,5 +1,21 @@
 # Changelog
 
+## 8.4.0-rc2
+
+- 純正Joy-Con専用だったHID列挙を、Generic DesktopのGame Pad／Joystickコレクション候補まで拡張
+- VID/PIDが異なる互換品を自動誤選択せず、検出候補のStable IDを明示選択できる互換モードを追加
+- HID Usage Page、Usage、入力／出力report長、製品名、VID/PIDを診断表示へ追加
+- Nintendo系`0x30`／`0x21`／`0x3f`に加え、SDLのSwitchドライバーで使われる7バイトinput-only形式を解析
+- 書込み非対応または短いinput reportの互換品は、Nintendoサブコマンドを送らないread-only経路へ安全に降格
+- 未対応Raw HID reportは長さと先頭hexをエラーへ残し、機器固有マッピングを追加可能に変更
+- XInputを最大4台まで動的ロード・監視し、A/B/X/Y、LB/RB、LT/RT、十字キー、左右スティック方向、押込み、Start/Backへ対応
+- Joy-ConとXInputを共通コントローラー入力状態へ統合し、短押し、長押し、Hold、入力記録、マウス／キーボード複合ルールを共用
+- コントローラー切断時に全DOWNを合成UPし、Hold出力や長押し状態を残留させない処理を追加
+- XInputとJoy-Conの状態キーを入力種別込みで分離し、同名コードの衝突を防止
+- 同一report内の方向切替は全UPを全DOWNより先にemitする回帰試験を追加
+- ゲームコントローラーUIへXInput接続状態、最後の入力、互換HID候補datalistを追加
+- Linux unit/race/vetとWindowsクロスコンパイルを通過。純正／互換Joy-ConとXInputの実機試験は継続中
+
 ## 8.4.0-rc1
 
 - Nintendo Switch Joy-Con（L）をWindows Bluetooth HIDから直接列挙・接続する入力ワーカーを追加

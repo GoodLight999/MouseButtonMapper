@@ -5,7 +5,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 )
@@ -200,138 +199,9 @@ func (a *App) joyConStatusTextLocked() string {
 }
 
 func (a *App) handleJoyConInputEvent(event InputEvent) {
-	code := normalizeJoyConCode(event.Token.Code)
-	if !isKnownJoyConCode(code) {
-		a.logf("ignored unknown Joy-Con input: %q", event.Token.Code)
-		return
-	}
-	trigger := Item{Kind: "JoyCon", Code: code}
-
-	a.mu.Lock()
-	wasDown := a.joyConDown[code]
-	if event.Down {
-		a.joyConDown[code] = true
-	} else {
-		delete(a.joyConDown, code)
-	}
-
-	if a.recordingMode != "" {
-		if a.recordingMode != "input" {
-			a.postActivityRefreshLocked()
-			a.mu.Unlock()
-			return
-		}
-		finish := false
-		if event.Down && !wasDown {
-			a.recordDownLocked(trigger, "押下")
-		} else if !event.Down && wasDown {
-			finish = a.recordUpLocked(trigger, "離した")
-		}
-		a.postActivityRefreshLocked()
-		a.mu.Unlock()
-		if finish {
-			go a.finishRecordingAuto()
-		}
-		return
-	}
-
-	if !event.Down {
-		holdRule, hadHold := a.joyConHoldRules[code]
-		delete(a.joyConHoldRules, code)
-		pending := a.joyConPending[code]
-		consumed := a.joyConConsumed[code]
-		delete(a.joyConPending, code)
-		delete(a.joyConConsumed, code)
-
-		if event.Synthetic {
-			a.abortLongPressForTriggerLocked(trigger, "Joy-Con disconnected")
-			delete(a.longPress, longPressKey(trigger))
-			a.mu.Unlock()
-			if hadHold {
-				a.enqueueRuleGuaranteed(joyConHoldPhaseRule(holdRule, false))
-			}
-			return
-		}
-
-		completion := a.finishLongPressLocked(trigger)
-		singleRule, single := a.singleJoyConRuleLocked(code)
-		active := a.enabled && !a.emergency
-		a.mu.Unlock()
-
-		if hadHold {
-			a.enqueueRuleGuaranteed(joyConHoldPhaseRule(holdRule, false))
-		}
-		if completion.HasRule {
-			a.enqueueRuleGuaranteed(completion.Rule)
-		}
-		if completion.Handled || hadHold {
-			return
-		}
-		if pending && !consumed && single && active && !singleRule.LongPressEnabled && !isJoyConHoldRule(singleRule) {
-			a.enqueueRuleGuaranteed(singleRule)
-		}
-		return
-	}
-
-	if wasDown {
-		a.mu.Unlock()
-		return
-	}
-	a.noteLastInputLocked(trigger, "押下")
-	if !a.enabled || a.emergency {
-		a.mu.Unlock()
-		return
-	}
-
-	rule, matched := a.findBestTriggerLocked(trigger)
-	if matched && len(rule.Input) > 1 {
-		a.markPrefixesConsumedLocked(rule)
-	}
-	if matched && isJoyConHoldRule(rule) {
-		a.joyConHoldRules[code] = cloneRule(rule)
-		a.mu.Unlock()
-		a.enqueueRuleGuaranteed(joyConHoldPhaseRule(rule, true))
-		return
-	}
-	if matched && rule.LongPressEnabled {
-		a.startLongPressLocked(rule, trigger)
-		a.mu.Unlock()
-		return
-	}
-	if matched && len(rule.Input) > 1 {
-		a.mu.Unlock()
-		a.enqueueRuleGuaranteed(rule)
-		return
-	}
-	if matched {
-		a.joyConPending[code] = true
-	}
-	a.mu.Unlock()
-}
-
-func (a *App) singleJoyConRuleLocked(code string) (Rule, bool) {
-	code = normalizeJoyConCode(code)
-	for _, rule := range a.rules {
-		if len(rule.Input) == 1 && strings.EqualFold(rule.Input[0].Kind, "JoyCon") && normalizeJoyConCode(rule.Input[0].Code) == code {
-			return rule, true
-		}
-	}
-	return Rule{}, false
+	a.handleControllerInputEvent("JoyCon", event)
 }
 
 func (a *App) clearJoyConInputStateLocked(reason string) {
-	codes := make([]string, 0, len(a.joyConDown))
-	for code := range a.joyConDown {
-		codes = append(codes, code)
-	}
-	sort.Strings(codes)
-	for _, code := range codes {
-		trigger := Item{Kind: "JoyCon", Code: code}
-		a.abortLongPressForTriggerLocked(trigger, reason)
-		delete(a.longPress, longPressKey(trigger))
-	}
-	clear(a.joyConDown)
-	clear(a.joyConPending)
-	clear(a.joyConConsumed)
-	clear(a.joyConHoldRules)
+	a.clearControllerInputStateLocked(reason)
 }

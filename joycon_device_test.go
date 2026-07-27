@@ -107,3 +107,80 @@ func TestBuildJoyConSubcommandRejectsOversizedPayload(t *testing.T) {
 		t.Fatal("oversized payload unexpectedly succeeded")
 	}
 }
+
+func TestJoyConCloneClassification(t *testing.T) {
+	if !(JoyConDeviceInfo{VendorID: 0x1234, ProductID: 0x5678, Product: "Joy-Con (L)"}).IsLeftJoyCon() {
+		t.Fatal("explicit clone product name was not accepted")
+	}
+	proLike := JoyConDeviceInfo{VendorID: joyConNintendoVendorID, ProductID: joyConProProductID, Product: "Pro Controller"}
+	if proLike.IsLeftJoyCon() || !proLike.MightBeLeftJoyCon() {
+		t.Fatalf("Switch Pro PID candidate classification is wrong: %+v", proLike)
+	}
+	proLike.ControllerType = joyConTypeLeft
+	if !proLike.IsLeftJoyCon() {
+		t.Fatal("probed left Joy-Con type was not accepted")
+	}
+}
+
+func TestParseJoyConControllerTypeReply(t *testing.T) {
+	report := make([]byte, 18)
+	report[0] = joyConReportSubcommandReply
+	report[13] = 0x80
+	report[14] = 0x02
+	report[17] = joyConTypeLeft
+	got, ok := parseJoyConControllerTypeReply(report)
+	if !ok || got != joyConTypeLeft {
+		t.Fatalf("controller type=(%d,%v)", got, ok)
+	}
+	report[13] = 0
+	if _, ok := parseJoyConControllerTypeReply(report); ok {
+		t.Fatal("unacknowledged reply was accepted")
+	}
+}
+
+func TestChoosePreferredGenericGamepadAsForcedCompatible(t *testing.T) {
+	device := JoyConDeviceInfo{
+		Fingerprint: "clone-1",
+		VendorID:    0x20d6, ProductID: 0xa711,
+		Product:   "Wireless Controller",
+		UsagePage: hidUsagePageGenericDesktop,
+		Usage:     hidUsageGamePad,
+	}
+	selected, ok := chooseJoyConDevice([]JoyConDeviceInfo{device}, "path:clone-1")
+	if !ok || !selected.ForcedCompatible {
+		t.Fatalf("manual compatible selection=%+v ok=%v", selected, ok)
+	}
+	if !selected.CanOpenAsCompatibleJoyCon() {
+		t.Fatal("manual compatible device cannot be opened")
+	}
+	if _, ok := chooseJoyConDevice([]JoyConDeviceInfo{device}, ""); ok {
+		t.Fatal("unknown generic gamepad was auto-selected without opt-in")
+	}
+}
+
+func TestGameControllerCollectionClassification(t *testing.T) {
+	gamepad := JoyConDeviceInfo{UsagePage: hidUsagePageGenericDesktop, Usage: hidUsageGamePad}
+	joystick := JoyConDeviceInfo{UsagePage: hidUsagePageGenericDesktop, Usage: hidUsageJoystick}
+	keyboard := JoyConDeviceInfo{UsagePage: hidUsagePageGenericDesktop, Usage: 0x06}
+	if !gamepad.IsGameControllerCollection() || !joystick.IsGameControllerCollection() {
+		t.Fatal("game controller HID collection was rejected")
+	}
+	if keyboard.IsGameControllerCollection() {
+		t.Fatal("keyboard HID collection was accepted as a game controller")
+	}
+}
+
+func TestShouldOpenJoyConInputOnlyDistinguishesUnknownCapsFromNoOutput(t *testing.T) {
+	knownWithoutCaps := JoyConDeviceInfo{VendorID: joyConNintendoVendorID, ProductID: joyConLeftProductID}
+	if shouldOpenJoyConInputOnly(knownWithoutCaps) {
+		t.Fatal("known Joy-Con with unavailable HID caps was incorrectly forced read-only")
+	}
+	forced := JoyConDeviceInfo{ForcedCompatible: true, InputReportLength: 64}
+	if !shouldOpenJoyConInputOnly(forced) {
+		t.Fatal("manually selected unknown HID candidate was not opened conservatively")
+	}
+	compact := JoyConDeviceInfo{InputReportLength: 8, OutputReportLength: 8}
+	if !shouldOpenJoyConInputOnly(compact) {
+		t.Fatal("compact input-only controller was not detected")
+	}
+}

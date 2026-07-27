@@ -14,12 +14,12 @@
    - Windows `go test ./...`
    - Windows `go vet -unsafeptr=false ./...`
    - Windows GUIビルド
-6. 再検索gate、方向release-before-press、`0x3f`物理ボタン／hat分離、停止時worker解放、キャリブレーション保存先の回帰試験が含まれていることを確認する。
+6. 再検索gate、方向release-before-press、`0x3f`物理ボタン／hat分離、input-only長さ検証、XInput切断合成UP、停止時worker解放、キャリブレーション保存先の回帰試験が含まれていることを確認する。
 7. 次の4成果物を同じ最終headから生成する。
-   - `MouseButtonMapper-v8.4.0-rc1.exe`
-   - `MouseButtonMapper-v8.4.0-rc1-windows-x64.zip`
-   - `MouseButtonMapper-v8.4.0-rc1-source.zip`
-   - `MouseButtonMapper-v8.4.0-rc1-SHA256SUMS.txt`
+   - `MouseButtonMapper-v8.4.0-rc2.exe`
+   - `MouseButtonMapper-v8.4.0-rc2-windows-x64.zip`
+   - `MouseButtonMapper-v8.4.0-rc2-source.zip`
+   - `MouseButtonMapper-v8.4.0-rc2-SHA256SUMS.txt`
 8. Actions artifactを新規フォルダーへ取得し、SHA-256一覧を独立再計算する。
 9. portable ZIP内部の`MouseButtonMapper.exe`と単体EXEがバイト単位で同一であることを確認する。
 10. source ZIPのZIP commentが最終PR head SHAと完全一致することを確認する。
@@ -36,7 +36,9 @@
 
 次の実機項目が終わるまで、PRをReadyまたはMergeにしない。
 
-- Bluetoothペアリングと`0x30`report-mode negotiation
+- 純正Joy-ConのBluetoothペアリングと`0x30`report-mode negotiation
+- 互換Raw HIDの候補選択、report形式、全入力の照合
+- XInput P1〜P4のボタン、トリガー、左右スティックの照合
 - 全物理ボタン、スティック軸、スティック方向、バッテリー表示
 - 電源断、Bluetooth切断、切断・再接続20回
 - スリープ／復帰

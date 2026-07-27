@@ -76,6 +76,8 @@ func (t InputToken) Normalized() InputToken {
 	t.DeviceID = strings.TrimSpace(t.DeviceID)
 	if strings.EqualFold(t.Kind, "joycon") {
 		t.Kind = "JoyCon"
+	} else if strings.EqualFold(t.Kind, "xinput") {
+		t.Kind = "XInput"
 	}
 	return t
 }
@@ -154,6 +156,63 @@ func parseJoyConInputReport(report []byte) (JoyConRawState, error) {
 	}
 }
 
+func parseJoyConInputOnlyReport(report []byte) (JoyConRawState, error) {
+	// SDL's Switch HID driver supports a class of third-party controllers that
+	// expose a compact input-only packet instead of report IDs 0x30/0x3f.
+	// Windows ReadFile may include a leading zero report ID for devices that do
+	// not use report IDs, so accept both 7-byte and 8-byte forms.
+	data := report
+	if len(data) >= 8 && data[0] == 0 {
+		data = data[1:]
+	}
+	if len(data) != 7 {
+		return JoyConRawState{}, fmt.Errorf("Switch input-only report has unexpected length: %d", len(report))
+	}
+	state := JoyConRawState{
+		ReportID:       0,
+		Buttons:        make(map[JoyConButton]bool, len(joyConLeftPhysicalButtons)),
+		BatteryPercent: -1,
+	}
+	buttons0 := data[0]
+	buttons1 := data[1]
+	hat := data[2] & 0x0f
+
+	// A compact Switch-compatible left controller commonly maps its four
+	// shoulder/rail controls onto the generic LB/RB/LT/RT bits. Preserve all
+	// four as distinct Joy-Con controls so recording remains usable even when a
+	// clone's labels differ from Nintendo's firmware.
+	setJoyConButton(state.Buttons, JoyConButtonL, buttons0&(1<<4) != 0)
+	setJoyConButton(state.Buttons, JoyConButtonSR, buttons0&(1<<5) != 0)
+	setJoyConButton(state.Buttons, JoyConButtonZL, buttons0&(1<<6) != 0)
+	setJoyConButton(state.Buttons, JoyConButtonSL, buttons0&(1<<7) != 0)
+	setJoyConButton(state.Buttons, JoyConButtonMinus, buttons1&(1<<0) != 0)
+	setJoyConButton(state.Buttons, JoyConButtonStick, buttons1&(1<<2) != 0)
+	setJoyConButton(state.Buttons, JoyConButtonCapture, buttons1&(1<<5) != 0)
+
+	parseConventionalHat(state.Buttons, hat)
+	state.StickX = scaleInputOnlyAxis(data[3], false)
+	state.StickY = scaleInputOnlyAxis(data[4], true)
+	return state, nil
+}
+
+func scaleInputOnlyAxis(value byte, invert bool) uint16 {
+	if invert {
+		value = 255 - value
+	}
+	return uint16((uint32(value)*4095 + 127) / 255)
+}
+
+func parseConventionalHat(dst map[JoyConButton]bool, hat byte) {
+	up := hat == 0 || hat == 1 || hat == 7
+	right := hat == 1 || hat == 2 || hat == 3
+	down := hat == 3 || hat == 4 || hat == 5
+	left := hat == 5 || hat == 6 || hat == 7
+	setJoyConButton(dst, JoyConButtonUp, up)
+	setJoyConButton(dst, JoyConButtonRight, right)
+	setJoyConButton(dst, JoyConButtonDown, down)
+	setJoyConButton(dst, JoyConButtonLeft, left)
+}
+
 func parseJoyConStandardButtons(dst map[JoyConButton]bool, shared, left byte) {
 	setJoyConButton(dst, JoyConButtonMinus, shared&(1<<0) != 0)
 	setJoyConButton(dst, JoyConButtonStick, shared&(1<<3) != 0)
@@ -170,10 +229,12 @@ func parseJoyConStandardButtons(dst map[JoyConButton]bool, shared, left byte) {
 }
 
 func parseJoyConSimpleButtons(dst map[JoyConButton]bool, buttons1, buttons2 byte) {
-	setJoyConButton(dst, JoyConButtonDown, buttons1&(1<<0) != 0)
-	setJoyConButton(dst, JoyConButtonRight, buttons1&(1<<1) != 0)
-	setJoyConButton(dst, JoyConButtonLeft, buttons1&(1<<2) != 0)
-	setJoyConButton(dst, JoyConButtonUp, buttons1&(1<<3) != 0)
+	// SDL's mature Switch HID driver documents the Joy-Con (L) 0x3f layout:
+	// bits 0..3 are Left, Down, Up, Right; bits 4..5 are SL/SR.
+	setJoyConButton(dst, JoyConButtonLeft, buttons1&(1<<0) != 0)
+	setJoyConButton(dst, JoyConButtonDown, buttons1&(1<<1) != 0)
+	setJoyConButton(dst, JoyConButtonUp, buttons1&(1<<2) != 0)
+	setJoyConButton(dst, JoyConButtonRight, buttons1&(1<<3) != 0)
 	setJoyConButton(dst, JoyConButtonSL, buttons1&(1<<4) != 0)
 	setJoyConButton(dst, JoyConButtonSR, buttons1&(1<<5) != 0)
 
@@ -185,10 +246,12 @@ func parseJoyConSimpleButtons(dst map[JoyConButton]bool, buttons1, buttons2 byte
 }
 
 func parseJoyConSimpleHat(dst map[JoyConButton]bool, hat byte) {
-	up := hat == 0 || hat == 1 || hat == 7
-	right := hat == 1 || hat == 2 || hat == 3
-	down := hat == 3 || hat == 4 || hat == 5
-	left := hat == 5 || hat == 6 || hat == 7
+	// Joy-Con (L) simple-mode hat is rotated relative to the conventional
+	// DirectInput hat: 0=right, 2=up, 4=left, 6=down.
+	up := hat == 1 || hat == 2 || hat == 3
+	right := hat == 0 || hat == 1 || hat == 7
+	down := hat == 5 || hat == 6 || hat == 7
+	left := hat == 3 || hat == 4 || hat == 5
 	setJoyConButton(dst, JoyConStickUp, up)
 	setJoyConButton(dst, JoyConStickRight, right)
 	setJoyConButton(dst, JoyConStickDown, down)
@@ -465,25 +528,27 @@ func diffJoyConButtonSets(sourceID string, previous, next map[JoyConButton]bool,
 	sort.Strings(buttons)
 
 	events := make([]InputEvent, 0, len(buttons))
-	for _, code := range buttons {
-		button := JoyConButton(code)
-		wasDown := previous[button]
-		isDown := next[button]
-		if wasDown == isDown {
-			continue
+	appendPhase := func(down bool) {
+		for _, code := range buttons {
+			button := JoyConButton(code)
+			if previous[button] == next[button] || next[button] != down {
+				continue
+			}
+			events = append(events, InputEvent{
+				Token: InputToken{
+					Kind:     "JoyCon",
+					Code:     code,
+					DeviceID: sourceID,
+				},
+				Down:       down,
+				SourceID:   sourceID,
+				OccurredAt: at,
+				Synthetic:  synthetic,
+			})
 		}
-		events = append(events, InputEvent{
-			Token: InputToken{
-				Kind:     "JoyCon",
-				Code:     code,
-				DeviceID: sourceID,
-			},
-			Down:       isDown,
-			SourceID:   sourceID,
-			OccurredAt: at,
-			Synthetic:  synthetic,
-		})
 	}
+	appendPhase(false)
+	appendPhase(true)
 	return events
 }
 
