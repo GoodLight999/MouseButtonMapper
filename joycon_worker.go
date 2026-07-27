@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -40,6 +41,7 @@ type JoyConWorker struct {
 	statusChanged func(JoyConConnectionStatus)
 	now           func() time.Time
 	rescan        chan struct{}
+	rescanPending atomic.Bool
 
 	statusMu       sync.RWMutex
 	status         JoyConConnectionStatus
@@ -75,12 +77,31 @@ func NewJoyConWorker(options JoyConWorkerOptions) (*JoyConWorker, error) {
 }
 
 func (w *JoyConWorker) RequestRescan() {
-	if w == nil {
+	if w == nil || !w.rescanPending.CompareAndSwap(false, true) {
 		return
 	}
 	select {
 	case w.rescan <- struct{}{}:
 	default:
+		w.rescanPending.Store(false)
+	}
+}
+
+// completeRescanAttempt marks one coalesced manual rescan as handled. Drain the
+// request signal before clearing the gate so a request made during enumeration,
+// open, or report-mode negotiation cannot immediately tear down the connection
+// that just satisfied it. Requests made after the gate is cleared remain queued.
+func (w *JoyConWorker) completeRescanAttempt() {
+	if w == nil || !w.rescanPending.Load() {
+		return
+	}
+	for {
+		select {
+		case <-w.rescan:
+		default:
+			w.rescanPending.Store(false)
+			return
+		}
 	}
 }
 
@@ -103,6 +124,7 @@ func (w *JoyConWorker) Run(ctx context.Context) error {
 		}
 		config := normalizeJoyConProfileConfig(w.config())
 		if !config.Enabled {
+			w.completeRescanAttempt()
 			status := w.Status()
 			status.Connected = false
 			status.BatteryPercent = -1
@@ -117,6 +139,7 @@ func (w *JoyConWorker) Run(ctx context.Context) error {
 
 		device, err := w.findDevice(config.PreferredDevice)
 		if err != nil {
+			w.completeRescanAttempt()
 			w.publishFailure(err)
 			if !w.waitAfterFailure(ctx, config) {
 				return nil
@@ -126,6 +149,7 @@ func (w *JoyConWorker) Run(ctx context.Context) error {
 
 		transport, err := w.backend.Open(device)
 		if err != nil {
+			w.completeRescanAttempt()
 			w.publishFailure(err)
 			if !w.waitAfterFailure(ctx, config) {
 				return nil
@@ -135,6 +159,7 @@ func (w *JoyConWorker) Run(ctx context.Context) error {
 
 		if err := transport.SetFullReportMode(); err != nil {
 			_ = transport.Close()
+			w.completeRescanAttempt()
 			w.publishFailure(fmt.Errorf("set Joy-Con full report mode: %w", err))
 			if !w.waitAfterFailure(ctx, config) {
 				return nil
@@ -142,6 +167,7 @@ func (w *JoyConWorker) Run(ctx context.Context) error {
 			continue
 		}
 
+		w.completeRescanAttempt()
 		err = w.runConnected(ctx, transport, config)
 		if errors.Is(err, context.Canceled) || ctx.Err() != nil {
 			return nil

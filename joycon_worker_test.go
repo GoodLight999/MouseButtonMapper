@@ -48,13 +48,16 @@ func (b *fakeJoyConBackend) counts() (int, int) {
 }
 
 type fakeJoyConTransport struct {
-	device    JoyConDeviceInfo
-	modeErr   error
-	reads     chan joyConReadResult
-	closed    chan struct{}
-	closeOnce sync.Once
-	modeMu    sync.Mutex
-	modeCalls int
+	device        JoyConDeviceInfo
+	modeErr       error
+	reads         chan joyConReadResult
+	closed        chan struct{}
+	closeOnce     sync.Once
+	modeMu        sync.Mutex
+	modeCalls     int
+	modeStarted   chan struct{}
+	modeRelease   chan struct{}
+	modeStartOnce sync.Once
 }
 
 func newFakeJoyConTransport() *fakeJoyConTransport {
@@ -72,6 +75,12 @@ func (t *fakeJoyConTransport) SetFullReportMode() error {
 	t.modeMu.Lock()
 	t.modeCalls++
 	t.modeMu.Unlock()
+	if t.modeStarted != nil {
+		t.modeStartOnce.Do(func() { close(t.modeStarted) })
+	}
+	if t.modeRelease != nil {
+		<-t.modeRelease
+	}
 	return t.modeErr
 }
 
@@ -154,6 +163,8 @@ func TestJoyConWorkerRescanReconnectsWithoutParallelOpen(t *testing.T) {
 	device := testJoyConDevice("left-a")
 	first := newFakeJoyConTransport()
 	second := newFakeJoyConTransport()
+	second.modeStarted = make(chan struct{})
+	second.modeRelease = make(chan struct{})
 	backend := &fakeJoyConBackend{
 		devices:    []JoyConDeviceInfo{device},
 		transports: []*fakeJoyConTransport{first, second},
@@ -184,14 +195,34 @@ func TestJoyConWorkerRescanReconnectsWithoutParallelOpen(t *testing.T) {
 	}
 
 	worker.RequestRescan()
+	select {
+	case <-first.closed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first transport did not close for manual rescan")
+	}
+	select {
+	case <-second.modeStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("replacement transport did not begin report-mode negotiation")
+	}
+
+	// The first request has been consumed and the replacement connection is now
+	// deliberately held in report-mode negotiation. A second request in this
+	// window must coalesce with the in-flight rescan.
 	worker.RequestRescan()
+	close(second.modeRelease)
 	secondStatus := waitJoyConReconnectCount(t, statuses, 2)
 	if secondStatus.Device.Serial != "left-a" {
 		t.Fatalf("second device=%+v", secondStatus.Device)
 	}
+	select {
+	case <-second.closed:
+		t.Fatal("coalesced rescan immediately closed the replacement transport")
+	case <-time.After(100 * time.Millisecond):
+	}
 	enumerates, opens := backend.counts()
 	if enumerates != 2 || opens != 2 {
-		t.Fatalf("enumerates=%d opens=%d", enumerates, opens)
+		t.Fatalf("coalesced rescan counts: enumerates=%d opens=%d", enumerates, opens)
 	}
 
 	cancel()
