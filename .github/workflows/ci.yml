@@ -48,27 +48,27 @@ jobs:
       - name: Build release-candidate artifacts
         shell: pwsh
         run: |
-          .\scripts\package.ps1 -Version 8.4.0-rc1
-          Copy-Item MouseButtonMapper.exe dist\MouseButtonMapper-v8.4.0-rc1.exe
-          git archive --format=zip --output=dist/MouseButtonMapper-v8.4.0-rc1-source.zip HEAD
+          .\scripts\package.ps1 -Version 8.4.0-rc2
+          Copy-Item MouseButtonMapper.exe dist\MouseButtonMapper-v8.4.0-rc2.exe
+          git archive --format=zip --output=dist/MouseButtonMapper-v8.4.0-rc2-source.zip HEAD
           $files = @(
-            "dist\MouseButtonMapper-v8.4.0-rc1.exe",
-            "dist\MouseButtonMapper-v8.4.0-rc1-windows-x64.zip",
-            "dist\MouseButtonMapper-v8.4.0-rc1-source.zip"
+            "dist\MouseButtonMapper-v8.4.0-rc2.exe",
+            "dist\MouseButtonMapper-v8.4.0-rc2-windows-x64.zip",
+            "dist\MouseButtonMapper-v8.4.0-rc2-source.zip"
           )
           $lines = foreach ($file in $files) {
             $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLowerInvariant()
             "$hash  $([IO.Path]::GetFileName($file))"
           }
-          $lines | Set-Content -Encoding ascii dist\MouseButtonMapper-v8.4.0-rc1-SHA256SUMS.txt
+          $lines | Set-Content -Encoding ascii dist\MouseButtonMapper-v8.4.0-rc2-SHA256SUMS.txt
       - name: Upload release-candidate artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: MouseButtonMapper-v8.4.0-rc1
+          name: MouseButtonMapper-v8.4.0-rc2
           path: |
-            dist/MouseButtonMapper-v8.4.0-rc1.exe
-            dist/MouseButtonMapper-v8.4.0-rc1-windows-x64.zip
-            dist/MouseButtonMapper-v8.4.0-rc1-source.zip
-            dist/MouseButtonMapper-v8.4.0-rc1-SHA256SUMS.txt
+            dist/MouseButtonMapper-v8.4.0-rc2.exe
+            dist/MouseButtonMapper-v8.4.0-rc2-windows-x64.zip
+            dist/MouseButtonMapper-v8.4.0-rc2-source.zip
+            dist/MouseButtonMapper-v8.4.0-rc2-SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 30
