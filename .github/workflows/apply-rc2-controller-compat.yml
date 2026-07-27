@@ -1,8 +1,8 @@
 name: Apply rc2 controller compatibility
 
 on:
-  push:
-    branches: [feature/joycon-l]
+  pull_request:
+    branches: [main]
     paths:
       - patches/rc2-controller-patch/**
       - patches/rc2-controller-compat/**
@@ -17,7 +17,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: feature/joycon-l
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
       - uses: actions/setup-go@v6
         with:
