@@ -1,0 +1,64 @@
+name: Apply rc2 controller compatibility
+
+on:
+  push:
+    branches: [feature/joycon-l]
+    paths:
+      - patches/rc2-controller-patch/**
+      - patches/rc2-controller-compat/**
+      - .github/workflows/apply-rc2-controller-compat.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: feature/joycon-l
+          fetch-depth: 0
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Reconstruct and verify rc2 patch
+        shell: pwsh
+        run: |
+          $parts = Get-ChildItem patches\rc2-controller-patch\*.part | Sort-Object Name
+          if ($parts.Count -ne 9) {
+            throw "Expected 9 patch parts, got $($parts.Count)"
+          }
+          $base64 = ($parts | ForEach-Object { Get-Content $_.FullName -Raw }) -join ''
+          $archive = Join-Path $env:RUNNER_TEMP 'mbm-rc2.patch.gz'
+          [IO.File]::WriteAllBytes($archive, [Convert]::FromBase64String($base64))
+          $hash = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -ne 'daa7723b1dac634fb0aefecc79eedc36c0fb832aaab47f5c8728e51ce59ff85b') {
+            throw "RC2 patch SHA-256 mismatch: $hash"
+          }
+          $patch = Join-Path $env:RUNNER_TEMP 'mbm-rc2.patch'
+          $input = [IO.File]::OpenRead($archive)
+          try {
+            $gzip = [IO.Compression.GZipStream]::new($input, [IO.Compression.CompressionMode]::Decompress)
+            try {
+              $output = [IO.File]::Create($patch)
+              try { $gzip.CopyTo($output) } finally { $output.Dispose() }
+            } finally { $gzip.Dispose() }
+          } finally { $input.Dispose() }
+          git apply --check $patch
+          git apply $patch
+          gofmt -w *.go
+          python scripts/check_public_repo.py
+          go test ./...
+          go vet -unsafeptr=false ./...
+          git diff --check
+      - name: Commit verified rc2 product tree
+        shell: pwsh
+        run: |
+          git rm -r patches/rc2-controller-patch patches/rc2-controller-compat .github/workflows/apply-rc2-controller-compat.yml
+          git add -A
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "feat: add compatible controllers and XInput"
+          git push origin HEAD:feature/joycon-l
