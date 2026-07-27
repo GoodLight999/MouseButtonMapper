@@ -165,9 +165,10 @@ func TestJoyConWorkerRescanReconnectsWithoutParallelOpen(t *testing.T) {
 	second := newFakeJoyConTransport()
 	second.modeStarted = make(chan struct{})
 	second.modeRelease = make(chan struct{})
+	third := newFakeJoyConTransport()
 	backend := &fakeJoyConBackend{
 		devices:    []JoyConDeviceInfo{device},
-		transports: []*fakeJoyConTransport{first, second},
+		transports: []*fakeJoyConTransport{first, second, third},
 	}
 	statuses := make(chan JoyConConnectionStatus, 32)
 	config := defaultJoyConProfileConfig()
@@ -223,6 +224,23 @@ func TestJoyConWorkerRescanReconnectsWithoutParallelOpen(t *testing.T) {
 	enumerates, opens := backend.counts()
 	if enumerates != 2 || opens != 2 {
 		t.Fatalf("coalesced rescan counts: enumerates=%d opens=%d", enumerates, opens)
+	}
+
+	// Once the replacement connection has completed, the gate must reopen so a
+	// later manual request can reconnect normally.
+	worker.RequestRescan()
+	select {
+	case <-second.closed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("replacement transport did not close for a later manual rescan")
+	}
+	thirdStatus := waitJoyConReconnectCount(t, statuses, 3)
+	if thirdStatus.Device.Serial != "left-a" {
+		t.Fatalf("third device=%+v", thirdStatus.Device)
+	}
+	enumerates, opens = backend.counts()
+	if enumerates != 3 || opens != 3 {
+		t.Fatalf("reopened rescan gate counts: enumerates=%d opens=%d", enumerates, opens)
 	}
 
 	cancel()
