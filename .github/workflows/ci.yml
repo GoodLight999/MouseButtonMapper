@@ -39,20 +39,9 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
-      - name: Windows unit tests with diagnostics
+      - name: Windows unit tests
         shell: pwsh
-        run: |
-          go test -v -count=1 ./... 2>&1 | Tee-Object -FilePath windows-test.log
-          $exitCode = $LASTEXITCODE
-          exit $exitCode
-      - name: Upload Windows test diagnostics
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: windows-test-diagnostics
-          path: windows-test.log
-          if-no-files-found: error
-          retention-days: 7
+        run: go test ./...
       - name: Windows vet
         shell: pwsh
         run: go vet -unsafeptr=false ./...
