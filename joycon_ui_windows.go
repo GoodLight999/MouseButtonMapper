@@ -15,6 +15,7 @@ let joyState=null;
 let mainState=null;
 let joyDirty=false;
 let joyBusy=0;
+let controllerBusy=0;
 let lastEditorProfile=-1;
 
 window.fetch=async function(input,init){
@@ -32,7 +33,7 @@ window.fetch=async function(input,init){
   if(url.endsWith('/api/state')&&(!init||String(init.method||'GET').toUpperCase()==='GET')){
     response.clone().json().then(state=>{
       mainState=state;
-      setTimeout(()=>renderRuleMode(state),0);
+      setTimeout(()=>{renderControllerFeature(state);renderRuleMode(state)},0);
       if(state&&Number(state.activeProfile)!==lastEditorProfile){
         lastEditorProfile=Number(state.activeProfile);
         joyDirty=false;
@@ -47,20 +48,28 @@ function injectStyle(){
   if(byId('joyConStyle'))return;
   const style=document.createElement('style');
   style.id='joyConStyle';
-  style.textContent='.joy-grid{display:grid;grid-template-columns:minmax(330px,.9fr) minmax(430px,1.1fr);gap:14px}.joy-metrics{display:grid;grid-template-columns:repeat(2,minmax(150px,1fr));gap:8px}.joy-stick{position:relative;width:190px;height:190px;border:1px solid var(--line);border-radius:50%;background:var(--panel);margin:10px auto}.joy-stick:before,.joy-stick:after{content:"";position:absolute;background:var(--line)}.joy-stick:before{left:50%;top:8%;bottom:8%;width:1px}.joy-stick:after{top:50%;left:8%;right:8%;height:1px}.joy-stick-dead{position:absolute;border:1px dashed var(--warn);border-radius:50%;left:35%;top:35%;width:30%;height:30%}.joy-stick-dot{position:absolute;width:18px;height:18px;border-radius:50%;background:var(--accent);left:calc(50% - 9px);top:calc(50% - 9px);transition:left .04s linear,top .04s linear}.joy-settings{display:grid;grid-template-columns:1fr 1fr;gap:10px}.joy-full{grid-column:1/-1}.joy-value{font-family:Consolas,monospace}.joy-buttons{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}@media(max-width:900px){.joy-grid{grid-template-columns:1fr}}';
+  style.textContent='.controller-gate{display:flex;align-items:flex-start;gap:12px}.controller-gate-copy{flex:1}.controller-disabled-note{margin-top:8px}.joy-grid{display:grid;grid-template-columns:minmax(330px,.9fr) minmax(430px,1.1fr);gap:14px}.joy-metrics{display:grid;grid-template-columns:repeat(2,minmax(150px,1fr));gap:8px}.joy-stick{position:relative;width:190px;height:190px;border:1px solid var(--line);border-radius:50%;background:var(--panel);margin:10px auto}.joy-stick:before,.joy-stick:after{content:"";position:absolute;background:var(--line)}.joy-stick:before{left:50%;top:8%;bottom:8%;width:1px}.joy-stick:after{top:50%;left:8%;right:8%;height:1px}.joy-stick-dead{position:absolute;border:1px dashed var(--warn);border-radius:50%;left:35%;top:35%;width:30%;height:30%}.joy-stick-dot{position:absolute;width:18px;height:18px;border-radius:50%;background:var(--accent);left:calc(50% - 9px);top:calc(50% - 9px);transition:left .04s linear,top .04s linear}.joy-settings{display:grid;grid-template-columns:1fr 1fr;gap:10px}.joy-full{grid-column:1/-1}.joy-value{font-family:Consolas,monospace}.joy-buttons{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}@media(max-width:900px){.joy-grid{grid-template-columns:1fr}}';
   document.head.appendChild(style);
 }
 
 function injectPanel(){
-  if(byId('joyConSection'))return;
   injectStyle();
   const sections=[...document.querySelectorAll('section.section')];
-  const ruleSection=sections.find(s=>{const t=s.querySelector('.section-title');return t&&t.textContent.includes('マウスボタンの割り当て')});
+  const ruleSection=sections.find(s=>{const t=s.querySelector('.section-title');return t&&(t.textContent.includes('マウスボタンの割り当て')||t.textContent.includes('マウス・キーボード・ゲームコントローラーの割り当て'))});
   if(!ruleSection)return;
+  if(!byId('controllerFeatureSection')){
+    const gate=document.createElement('section');
+    gate.id='controllerFeatureSection';
+    gate.className='section';
+    gate.innerHTML='<div class="section-head"><div><div class="section-title">実験的なゲームコントローラー入力</div><div class="section-help">不要な場合は完全に停止して隠せます。BetterJoyやJoyToKeyへ入力処理を任せる構成とも共存できます。</div></div></div><div class="section-body"><div class="subpanel controller-gate"><input type="checkbox" id="controllerFeatureEnabled"><div class="controller-gate-copy"><label for="controllerFeatureEnabled"><b>Joy-Con／互換Raw HID／XInput機能を有効にする</b></label><div class="muted controller-disabled-note" id="controllerFeatureStatus">無効時はHID列挙・XInput監視・コントローラールール実行を停止します。既存設定は削除しません。</div></div></div></div>';
+    ruleSection.parentNode.insertBefore(gate,ruleSection);
+    byId('controllerFeatureEnabled').addEventListener('change',toggleControllerFeature);
+  }
+  if(byId('joyConSection'))return;
   const panel=document.createElement('section');
   panel.id='joyConSection';
   panel.className='section';
-  panel.innerHTML='<div class="section-head"><div><div class="section-title">Joy-Con（L）</div><div class="section-help">選択中のプロファイルへJoy-Con設定を保存し、既存のマウス・キーボード割り当てと同じルールで使用します。</div></div></div>'+
+  panel.innerHTML='<div class="section-head"><div><div class="section-title">ゲームコントローラー詳細設定</div><div class="section-help">純正Joy-Con（L）、手動選択したSwitch互換Raw HID、XInput P1〜P4を既存ルールエンジンへ接続します。</div></div></div>'+
   '<div class="section-body joy-grid"><div class="subpanel"><div class="subpanel-title">接続と入力状態</div><div class="statusbox"><div class="main" id="joyStatusText">状態を取得中</div><div class="detail" id="joyErrorText"></div></div><div class="statusbox" style="margin-top:8px"><div class="main" id="xInputStatusText">XInput状態を取得中</div><div class="detail" id="xInputLastText">最後の入力: ―</div></div><div class="joy-metrics" style="margin-top:10px">'+
   '<div class="metric"><div class="k">検出したJoy-Con</div><div class="v" id="joyDeviceText">―</div></div><div class="metric"><div class="k">バッテリー残量</div><div class="v" id="joyBatteryText">―</div></div><div class="metric"><div class="k">最後に検出したJoy-Con入力</div><div class="v" id="joyLastInputText">―</div></div><div class="metric"><div class="k">スティック現在位置</div><div class="v joy-value" id="joyPositionText">X 0.000 / Y 0.000</div></div></div>'+
   '<div class="joy-stick" aria-label="Joy-Conスティック現在位置"><div class="joy-stick-dead" id="joyDeadCircle"></div><div class="joy-stick-dot" id="joyStickDot"></div></div><div class="joy-buttons"><button type="button" id="joyRescan">Joy-Conを接続・再検索</button><button type="button" id="joyRecord" class="record">● ゲームコントローラー入力を記録</button><button type="button" id="joyAssignLast">選択中の割り当てへ最後のコントローラー入力を設定</button></div></div>'+
@@ -89,6 +98,7 @@ function injectRuleMode(){
   const output=byId('ruleOutput');
   if(!input||!output)return;
   const field=document.createElement('div');
+  field.id='joyRuleModeField';
   field.className='field';
   field.innerHTML='<label for="joyRuleMode">実行方式</label><select id="joyRuleMode"><option value="Tap">押して離したときに1回実行</option><option value="Hold">押している間、出力キーを保持</option></select><small>HoldはJoy-ConまたはXInputの単独入力からキーボードキーを保持する場合に使用します。</small>';
   output.parentElement.parentNode.insertBefore(field,output.parentElement);
@@ -124,15 +134,60 @@ function renderRuleMode(state){
   injectPanel();
   injectRuleMode();
   const select=byId('joyRuleMode');
+  const field=byId('joyRuleModeField');
+  const enabled=!!(state&&state.controllerEnabled);
+  if(field)field.hidden=!enabled;
   if(!select||!state||!Array.isArray(state.rules))return;
   const index=selectedRuleIndex();
   const rule=index>=0?state.rules[index]:null;
   select.value=rule&&String(rule.mode).toLowerCase()==='hold'?'Hold':'Tap';
   const hasRule=!!rule;
-  select.disabled=!hasRule;
+  select.disabled=!enabled||!hasRule;
+}
+
+function renderControllerFeature(state){
+  injectPanel();
+  if(!state)return;
+  const enabled=!!state.controllerEnabled;
+  const toggle=byId('controllerFeatureEnabled');
+  if(toggle&&!controllerBusy)toggle.checked=enabled;
+  const detail=byId('joyConSection');
+  if(detail)detail.hidden=!enabled;
+  const status=byId('controllerFeatureStatus');
+  if(status)status.textContent=enabled?'有効: Raw HID列挙とXInput監視を実行しています。不要ならOFFにすると完全停止します。':'無効: HID列挙・XInput監視・コントローラールール実行を停止中です。既存設定は保持されています。';
+  const sections=[...document.querySelectorAll('section.section')];
+  const ruleSection=sections.find(s=>{const t=s.querySelector('.section-title');return t&&(t.textContent.includes('マウスボタンの割り当て')||t.textContent.includes('マウス・キーボード・ゲームコントローラーの割り当て'))});
+  const title=ruleSection&&ruleSection.querySelector('.section-title');
+  if(title)title.textContent=enabled?'マウス・キーボード・ゲームコントローラーの割り当て':'マウスボタンの割り当て';
+  renderRuleMode(state);
+}
+
+async function toggleControllerFeature(){
+  if(controllerBusy)return;
+  const toggle=byId('controllerFeatureEnabled');
+  if(!toggle)return;
+  controllerBusy++;
+  toggle.disabled=true;
+  try{
+    const response=await originalFetch('/api/controller',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:toggle.checked})});
+    let result={};
+    try{result=await response.json()}catch(_e){}
+    if(!response.ok||result.ok===false)throw new Error(result.error||('HTTP '+response.status));
+    if(result.state)mainState=result.state;
+    if(result.joyCon)joyState=result.joyCon;
+    renderControllerFeature(mainState);
+    if(mainState&&mainState.controllerEnabled)loadJoyCon();
+    const message=byId('message');
+    if(message){message.textContent=result.message||'コントローラー機能設定を変更しました。';message.classList.remove('error')}
+  }catch(e){
+    toggle.checked=!!(mainState&&mainState.controllerEnabled);
+    const message=byId('message');
+    if(message){message.textContent=e.message;message.classList.add('error')}
+  }finally{controllerBusy--;toggle.disabled=false}
 }
 
 async function loadJoyCon(){
+  if(mainState&&!mainState.controllerEnabled){renderControllerFeature(mainState);return}
   if(joyBusy)return;
   joyBusy++;
   try{
@@ -170,7 +225,10 @@ async function joyPost(op){
 
 function renderJoyCon(){
   injectPanel();
-  if(!joyState)return;
+  const enabled=!!((mainState&&mainState.controllerEnabled)||(joyState&&joyState.controllerEnabled));
+  const detail=byId('joyConSection');
+  if(detail)detail.hidden=!enabled;
+  if(!enabled||!joyState)return;
   const status=joyState.status||{};
   byId('joyStatusText').textContent='Joy-Con: '+(joyState.statusText||'未接続');
   byId('xInputStatusText').textContent=joyState.xInputStatusText||'XInput未初期化';
@@ -241,8 +299,9 @@ function assignLastInput(){
 
 function start(){
   injectPanel();
+  renderControllerFeature(mainState);
   loadJoyCon();
-  setInterval(loadJoyCon,300);
+  setInterval(()=>{if(!mainState||mainState.controllerEnabled)loadJoyCon()},500);
 }
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
 })();`

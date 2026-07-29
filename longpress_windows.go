@@ -36,11 +36,8 @@ func longPressKey(it Item) string {
 			return "key:" + strconv.Itoa(int(genericVK(vk)))
 		}
 	}
-	if strings.EqualFold(it.Kind, "JoyCon") {
-		code := normalizeJoyConCode(it.Code)
-		if isKnownJoyConCode(code) {
-			return "joycon:" + strings.ToLower(code)
-		}
+	if normalized, ok := normalizeControllerInput(it.Kind, it.Code); ok {
+		return strings.ToLower(normalized.Kind) + ":" + strings.ToLower(normalized.Code)
 	}
 	return ""
 }
@@ -50,8 +47,9 @@ func isHoldableLongPressTrigger(it Item) bool {
 		vk, ok := parseVK(it.Code)
 		return ok && !isModifier(vk)
 	}
-	if strings.EqualFold(it.Kind, "JoyCon") {
-		return isKnownJoyConCode(it.Code)
+	if isControllerInputKind(it.Kind) {
+		_, ok := normalizeControllerInput(it.Kind, it.Code)
+		return ok
 	}
 	if !strings.EqualFold(it.Kind, "Mouse") {
 		return false
@@ -73,7 +71,7 @@ func validateLongPressRule(r Rule) error {
 	}
 	trigger := r.Input[len(r.Input)-1]
 	if !isHoldableLongPressTrigger(trigger) {
-		return fmt.Errorf("長押し判定の最後の入力には、Joy-Conボタン・サイド1・サイド2・修飾キー以外のキーボードキーを指定してください")
+		return fmt.Errorf("長押し判定の最後の入力には、ゲームコントローラーボタン・サイド1・サイド2・修飾キー以外のキーボードキーを指定してください")
 	}
 	action := normalizeLongPressAction(r.LongPressAction)
 	if action == longPressActionExecute && len(r.LongPressOutput) == 0 {

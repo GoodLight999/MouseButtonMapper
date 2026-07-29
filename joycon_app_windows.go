@@ -91,6 +91,13 @@ func joyConCodeText(code string) string {
 }
 
 func (a *App) startJoyConSubsystem() {
+	a.mu.RLock()
+	enabled := a.config.Controller.Enabled
+	alreadyRunning := a.joyConWorker != nil
+	a.mu.RUnlock()
+	if !enabled || alreadyRunning {
+		return
+	}
 	worker, err := NewJoyConWorker(JoyConWorkerOptions{
 		Backend: WindowsJoyConBackend{},
 		Config:  a.effectiveJoyConConfig,
@@ -111,6 +118,11 @@ func (a *App) startJoyConSubsystem() {
 	done := make(chan struct{})
 
 	a.mu.Lock()
+	if !a.config.Controller.Enabled || a.joyConWorker != nil {
+		a.mu.Unlock()
+		cancel()
+		return
+	}
 	a.joyConWorker = worker
 	a.joyConCancel = cancel
 	a.joyConDone = done
@@ -149,6 +161,11 @@ func (a *App) stopJoyConSubsystem() {
 func (a *App) effectiveJoyConConfig() JoyConProfileConfig {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
+	if !a.config.Controller.Enabled {
+		config := defaultJoyConProfileConfig()
+		config.Enabled = false
+		return config
+	}
 	if a.activeProfileIndex < 0 || a.activeProfileIndex >= len(a.config.Profiles) {
 		return defaultJoyConProfileConfig()
 	}
@@ -156,7 +173,7 @@ func (a *App) effectiveJoyConConfig() JoyConProfileConfig {
 }
 
 func (a *App) requestJoyConRescanLocked() {
-	if a.joyConWorker != nil {
+	if a.config.Controller.Enabled && a.joyConWorker != nil {
 		a.joyConWorker.RequestRescan()
 	}
 }
@@ -164,8 +181,9 @@ func (a *App) requestJoyConRescanLocked() {
 func (a *App) requestJoyConRescan() {
 	a.mu.RLock()
 	worker := a.joyConWorker
+	enabled := a.config.Controller.Enabled
 	a.mu.RUnlock()
-	if worker != nil {
+	if enabled && worker != nil {
 		worker.RequestRescan()
 	}
 }
@@ -177,6 +195,9 @@ func (a *App) joyConStatusSnapshot() JoyConConnectionStatus {
 }
 
 func (a *App) joyConStatusTextLocked() string {
+	if !a.config.Controller.Enabled {
+		return "コントローラー機能は無効"
+	}
 	status := a.joyConStatus
 	if status.Connected {
 		name := strings.TrimSpace(status.Device.Product)

@@ -9,6 +9,7 @@ import (
 
 func newControllerInputTestApp(rules ...Rule) *App {
 	return &App{
+		config:              Config{Controller: ControllerFeatureConfig{Enabled: true}},
 		rules:               rules,
 		enabled:             true,
 		mouseDown:           map[string]bool{},

@@ -1,3 +1,22 @@
+# Regression Checklist
+
+## ゲームコントローラー全体ゲート（rc3必須）
+
+- [ ] 新規設定では全体スイッチがOFFで起動する
+- [ ] Version 9以前の設定を読み込んでも暗黙にONにならない
+- [ ] OFF時はcontroller詳細設定とHold欄が隠れ、再有効化toggleだけが見える
+- [ ] OFF時にJoy-Con／互換HIDの列挙・Open・再接続を行わない
+- [ ] OFF時にXInput workerを起動せず、P1～P4をpollしない
+- [ ] worker停止直前に届いた遅延HID／XInput eventを無視する
+- [ ] OFF時はcontroller入力を含むruleを実行しない
+- [ ] OFFへ切り替えても保存済みcontroller rule、Joy-Con設定、Stable IDを削除しない
+- [ ] OFF→ONで保存済みcontroller ruleと詳細設定が復帰する
+- [ ] OFF中もmouse/key rule、short/long press、profile switch、自動切替が動く
+- [ ] mouse/key long-press中にcontrollerをOFFにしてもその状態を巻き添えで消さない
+- [ ] controller Hold／long-press中にOFFへ切り替えてkeyやpending stateが残らない
+- [ ] BetterJoy／JoyToKeyが生成したkeyboard/mouse入力を、controller機能OFFのまま処理できる
+- [ ] 診断にglobal gate、Joy-Con worker、XInput workerの状態が表示される
+
 # Windows実機 回帰チェックリスト
 
 ## 起動・終了

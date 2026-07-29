@@ -8,6 +8,7 @@ func TestRuleOnlyRebuildDoesNotRequestJoyConRescan(t *testing.T) {
 	worker := &JoyConWorker{rescan: make(chan struct{}, 1)}
 	app := &App{
 		config: Config{
+			Controller:      ControllerFeatureConfig{Enabled: true},
 			ActiveProfileId: "profile",
 			Profiles: []Profile{{
 				Id:   "profile",

@@ -538,12 +538,13 @@ type INPUT struct {
 }
 
 type Config struct {
-	Version         int              `json:"Version"`
-	SavedBy         string           `json:"SavedBy,omitempty"`
-	SavedAt         string           `json:"SavedAt,omitempty"`
-	ActiveProfileId string           `json:"ActiveProfileId"`
-	Profiles        []Profile        `json:"Profiles"`
-	AutoSwitch      AutoSwitchConfig `json:"AutoSwitch,omitempty"`
+	Version         int                     `json:"Version"`
+	SavedBy         string                  `json:"SavedBy,omitempty"`
+	SavedAt         string                  `json:"SavedAt,omitempty"`
+	ActiveProfileId string                  `json:"ActiveProfileId"`
+	Profiles        []Profile               `json:"Profiles"`
+	AutoSwitch      AutoSwitchConfig        `json:"AutoSwitch,omitempty"`
+	Controller      ControllerFeatureConfig `json:"Controller,omitempty"`
 }
 type Profile struct {
 	Id     string              `json:"Id"`
@@ -765,8 +766,7 @@ func main() {
 		_ = app.loadDefaultConfig()
 	}
 	app.startAutoSwitchWorker()
-	app.startJoyConSubsystem()
-	app.startXInputSubsystem()
+	app.syncControllerSubsystems()
 	if err := app.startWebServer(); err != nil {
 		app.logf("web UI init error: %v", err)
 		messageBox("MouseButtonMapper", "設定画面の起動に失敗しました。\n"+err.Error())
@@ -1444,8 +1444,8 @@ func normalizeConfig(cfg Config) Config {
 			cfg.ActiveProfileId = "default"
 		}
 	}
-	if cfg.Version < 9 {
-		cfg.Version = 9
+	if cfg.Version < 10 {
+		cfg.Version = 10
 	}
 	seenProfiles := map[string]bool{}
 	for i := range cfg.Profiles {
@@ -1520,10 +1520,11 @@ func (a *App) applyConfig(cfg Config) {
 	}
 	a.rebuildRulesLocked()
 	a.requestJoyConRescanLocked()
-	a.logf("loaded config: effective=%s base=%s rules=%d auto=%v bindings=%d", a.activeProfileNameLocked(), a.baseProfileNameLocked(), len(a.rules), cfg.AutoSwitch.Enabled, len(cfg.AutoSwitch.Bindings))
+	a.logf("loaded config: effective=%s base=%s rules=%d auto=%v bindings=%d controller=%v", a.activeProfileNameLocked(), a.baseProfileNameLocked(), len(a.rules), cfg.AutoSwitch.Enabled, len(cfg.AutoSwitch.Bindings), cfg.Controller.Enabled)
 	a.postUIRefreshLocked()
 	a.mu.Unlock()
 	a.releaseJoyConHeldOutputs()
+	a.syncControllerSubsystems()
 }
 
 func mustDefaultConfig() Config {
@@ -1661,6 +1662,9 @@ func (a *App) rebuildRulesLockedWithJoyConRescan(rescanJoyCon bool) {
 	for _, r := range prof.Rules {
 		r.Mode = normalizeJoyConRuleMode(r.Mode)
 		if !r.Enabled || len(r.Input) == 0 || !ruleHasRunnableOutput(r) || isDangerousSingleReplacement(r) {
+			continue
+		}
+		if !a.config.Controller.Enabled && ruleUsesControllerInput(r) {
 			continue
 		}
 		if err := validateJoyConHoldRule(r); err != nil {
@@ -4172,6 +4176,8 @@ func (a *App) importConfigFromClipboardPath() error {
 		a.logf("backup before import failed: %v", err)
 	}
 	a.mu.Lock()
+	a.abortAllLongPressLocked("configuration imported", false)
+	a.clearControllerInputStateLocked("configuration imported")
 	a.config = normalizeConfig(cfg)
 	a.editorProfileIndex = a.profileIndexByIDLocked(a.config.ActiveProfileId)
 	a.clearAutoMatchLocked()
@@ -4182,6 +4188,8 @@ func (a *App) importConfigFromClipboardPath() error {
 	a.rebuildRulesLocked()
 	a.postUIRefreshLocked()
 	a.mu.Unlock()
+	a.releaseJoyConHeldOutputs()
+	a.syncControllerSubsystems()
 	setText(a.ctrlMessage, "設定をインポートして適用しました: "+src)
 	return nil
 }
@@ -4193,6 +4201,9 @@ func (a *App) copyDiagnosticLogToClipboard() error {
 		"Config: " + a.configPath,
 		"Log: " + a.logPath,
 		fmt.Sprintf("Enabled=%v Emergency=%v Profile=%s ActiveRules=%d", a.enabled, a.emergency, a.activeProfileNameLocked(), len(a.rules)),
+		fmt.Sprintf("ControllerFeature=%v JoyConWorker=%v XInputWorker=%v", a.config.Controller.Enabled, a.joyConWorker != nil, a.xInputCancel != nil),
+		"JoyConStatus: " + a.joyConStatusTextLocked(),
+		"XInputStatus: " + a.xInputStatusTextLocked(),
 		"HookHealth: " + a.hookHealthText(),
 		"",
 		"Rules:",
@@ -4365,8 +4376,8 @@ func (a *App) backupConfig() error {
 func (a *App) saveConfigLocked() error {
 	// フックコールバックと共有するa.muを保持したままディスクI/Oをしない。
 	// ここでは完全なJSONスナップショットだけを作り、専用ワーカーへ渡す。
-	if a.config.Version < 9 {
-		a.config.Version = 9
+	if a.config.Version < 10 {
+		a.config.Version = 10
 	}
 	a.config.SavedBy = appVersion
 	a.config.SavedAt = time.Now().Format(time.RFC3339)
@@ -4515,6 +4526,7 @@ type webState struct {
 	Profiles             []webProfile     `json:"profiles"`
 	Rules                []webRule        `json:"rules"`
 	AutoSwitchEnabled    bool             `json:"autoSwitchEnabled"`
+	ControllerEnabled    bool             `json:"controllerEnabled"`
 	AutoDebounceMs       int              `json:"autoDebounceMs"`
 	AutoBindings         []webAutoBinding `json:"autoBindings"`
 	AutoMatchedBindingID string           `json:"autoMatchedBindingId"`
@@ -4541,6 +4553,7 @@ func (a *App) startWebServer() error {
 	mux.HandleFunc("/api/rule", a.webAPIRule)
 	mux.HandleFunc("/api/profile", a.webAPIProfile)
 	mux.HandleFunc("/api/autoswitch", a.webAPIAutoSwitch)
+	mux.HandleFunc("/api/controller", a.webAPIControllerFeature)
 	mux.HandleFunc("/api/joycon", a.webAPIJoyCon)
 	mux.HandleFunc("/joycon-ui.js", a.webJoyConUIJS)
 	mux.HandleFunc("/api/import-json", a.webAPIImportJSON)
@@ -4884,6 +4897,7 @@ func (a *App) buildWebState() webState {
 		Profiles:             profiles,
 		Rules:                rules,
 		AutoSwitchEnabled:    a.config.AutoSwitch.Enabled,
+		ControllerEnabled:    a.config.Controller.Enabled,
 		AutoDebounceMs:       a.config.AutoSwitch.DebounceMs,
 		AutoBindings:         autoBindings,
 		AutoMatchedBindingID: a.autoBindingID,

@@ -11,6 +11,7 @@ import (
 )
 
 type joyConWebState struct {
+	ControllerEnabled  bool                   `json:"controllerEnabled"`
 	ProfileIndex       int                    `json:"profileIndex"`
 	ProfileName        string                 `json:"profileName"`
 	Enabled            bool                   `json:"enabled"`
@@ -72,6 +73,7 @@ func (a *App) buildJoyConWebState() joyConWebState {
 		lastControllerText = itemsText([]Item{a.lastControllerInput})
 	}
 	return joyConWebState{
+		ControllerEnabled:  a.config.Controller.Enabled,
 		ProfileIndex:       profileIndex,
 		ProfileName:        profileName,
 		Enabled:            config.Enabled,
@@ -100,6 +102,10 @@ func (a *App) webAPIJoyCon(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", "GET, POST")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !a.controllerFeatureEnabled() {
+		writeError(w, fmt.Errorf("ゲームコントローラー機能は無効です。上部の実験的機能スイッチを有効にしてください。"))
 		return
 	}
 	var req joyConWebRequest
@@ -178,6 +184,9 @@ func (a *App) saveJoyConWebSettings(req joyConWebRequest) error {
 func (a *App) startJoyConCalibration() error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if !a.config.Controller.Enabled {
+		return fmt.Errorf("ゲームコントローラー機能は無効です。")
+	}
 	if !a.joyConStatus.Connected {
 		return fmt.Errorf("Joy-Con（L）が接続されていません。先に「Joy-Conを接続・再検索」を実行してください。")
 	}

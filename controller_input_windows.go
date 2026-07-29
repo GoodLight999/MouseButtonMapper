@@ -49,6 +49,10 @@ func (a *App) handleControllerInputEvent(kind string, event InputEvent) {
 	key := controllerInputKey(trigger)
 
 	a.mu.Lock()
+	if !a.config.Controller.Enabled {
+		a.mu.Unlock()
+		return
+	}
 	wasDown := a.controllerDown[key]
 	if event.Down {
 		a.controllerDown[key] = true

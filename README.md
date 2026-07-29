@@ -1,67 +1,64 @@
 # MouseButtonMapper
 
-Windows向けの多ボタンマウス／ゲームコントローラー割り当てツールです。マウス、キーボード、Joy-Con（L）、Switch互換Raw HID、XInputコントローラーの入力や組み合わせを、キー・マウスボタン・ホイール操作へ変換します。
+Windows向けの多ボタンマウス割り当てツールです。マウス／キーボードを中心に、必要な場合だけJoy-Con（L）、Switch互換Raw HID、XInputコントローラーを追加できます。
 
 ## 現在の配布候補
 
-- バージョン: **8.4.0-rc2**
-- 状態: Joy-Con（L）・互換Raw HID・XInput実機検証用Release Candidate
+- バージョン: **8.4.0-rc3**
 - 対象: Windows x64
-- 配布形態: 単体EXE、ポータブルZIP、ソースZIP、SHA-256一覧
+- 安定版: `main`の8.3.0
+- 開発版: Draft PR #5の実機検証用RC
 - 設定保存先: `%LOCALAPPDATA%\MouseButtonMapper\config.json`
-- 自動起動: スタートアップフォルダーへショートカットを置く方式
 
-`main`の安定版は8.3.0です。8.4.0-rc2はDraft PR #5上の候補であり、純正Joy-Con、互換品、XInput機器の接続・切断・長時間試験が終わるまで安定版へマージしません。
+## 重要: コントローラー機能は初期状態でOFF
+
+ゲームコントローラー対応は実験機能です。新規設定および旧設定からの移行では、次の全体スイッチがOFFになります。
+
+`Joy-Con／互換Raw HID／XInput機能を有効にする`
+
+OFFの間は次の動作になります。
+
+- Joy-Con／互換HIDの列挙・接続を行わない
+- XInput DLLのポーリングを行わない
+- コントローラー由来の入力イベントを無視する
+- コントローラー詳細設定とHold設定を隠す
+- 保存済みコントローラールールは削除せず、実行対象からだけ外す
+- マウス／キーボード機能、長押し、プロファイル、自動切替は通常どおり動作する
+
+BetterJoyやJoyToKeyへコントローラー処理を任せる場合は、全体スイッチをOFFのまま使用してください。それらからキーボード／マウス入力を出せば、MouseButtonMapperは通常入力として扱えます。
 
 ## 主な機能
 
-- 多ボタンマウス、ホイール、キーボード、Joy-Con（L）、Switch互換Raw HID、XInputの割り当て
-- Joy-Con（L）の上下左右、L、ZL、SL、SR、－、キャプチャー、スティック押込み
-- 左スティックの4方向／8方向、デッドゾーン、ヒステリシス、反転、キャリブレーション
-- Joy-Con／XInput＋右手マウス、コントローラー＋キーボードの複合入力
-- キー、複数キー同時押し、マウスボタン、ホイールへの変換
-- 短押し／長押しの分岐、長押し時の別操作、長押しによる短押しキャンセル
-- Joy-Con／XInputボタンを押している間だけキーを保持するHoldモード
-- 入力と実行内容の記録（すべての同時押しを離すと自動確定）
-- 複数プロファイルと前面アプリ／ゲーム連動の自動切替
-- 低レベルフック専用スレッド、出力ワーカー、自動再フック監視
+- 多ボタンマウス、ホイール、キーボードの割り当て
+- 短押し／長押し分岐、長押し時の別操作、短押しキャンセル
+- 入力／実行内容の記録と、全入力UP時の自動確定
+- 複数プロファイル、前面アプリ連動の自動切替
+- 低レベルフック専用スレッド、出力ワーカー、フック監視
 - 多重起動拒否
 - 緊急停止: `Ctrl + Alt + Shift + F12`
+- 任意機能として純正Joy-Con（L）、手動選択したSwitch互換Raw HID、XInput P1～P4
+- コントローラー＋マウス／キーボード複合入力、短押し、長押し、Hold
 
-## ゲームコントローラーの使い方
+## コントローラーを試す場合
 
-### 純正Joy-Con（L）
+1. 設定画面で全体スイッチをONにします。
+2. 純正Joy-Conは通常ペアリング後、`Joy-Conを接続・再検索`を押します。
+3. 互換品はSteamを完全終了し、候補一覧からStable IDを明示選択します。
+4. XInput機器はP1～P4として自動検出されます。
+5. `ゲームコントローラー入力を記録`から割り当てます。
 
-1. WindowsのBluetooth設定でJoy-Con（L）を通常ペアリングします。
-2. MouseButtonMapperを起動し、設定画面のゲームコントローラー欄を開きます。
-3. Joy-Conを有効にし、`Joy-Conを接続・再検索`を押します。
-4. `ゲームコントローラー入力を記録`からボタン／スティック方向を割り当てます。
-5. スティックを使う場合はキャリブレーションを実施します。
+互換品が未対応reportを送る場合、診断へreport長と先頭hexを残します。コントローラー入力はゲーム側から隠さないため、二重入力が発生する場合は全体スイッチをOFFにし、BetterJoy／JoyToKey／HidHide等の外部構成を検討してください。
 
-### Switch互換品
+## CI成果物
 
-互換品はWindows標準ゲームパッドやJoyToKeyでは入力が見えず、Steam InputだけがRaw HIDを直接解釈できる場合があります。rc2はHID Usage Page/Usageからゲームパッド候補だけを列挙し、`0x30`、`0x3f`、SDL互換のinput-only形式を読み取ります。
+Draft PRと作業ブランチのCIは、同一headから次を生成します。
 
-自動判定されない場合は、設定画面の`優先するJoy-Con／互換HID識別子`から検出候補を選んで保存します。未対応reportの場合は、エラー欄へreport長と先頭hexが表示されるため、機器固有マッピングの追加に利用できます。Steamがデバイスを占有する場合があるため、初回確認時はSteamを完全終了してください。
+- `MouseButtonMapper-v8.4.0-rc3.exe`
+- `MouseButtonMapper-v8.4.0-rc3-windows-x64.zip`
+- `MouseButtonMapper-v8.4.0-rc3-source.zip`
+- `MouseButtonMapper-v8.4.0-rc3-SHA256SUMS.txt`
 
-### XInput
-
-Xbox系、XInputモードの互換パッド、片手ゲームパッドを最大4台まで自動監視します。A/B/X/Y、LB/RB、LT/RT、十字キー、左右スティック方向、スティック押込み、Start/Backを入力記録できます。
-
-本アプリはBetterJoy、ViGEmBus、HidHideを必須としません。ゲームが物理コントローラー入力を直接受け取る場合は二重入力になり得るため、実ゲームで確認してください。
-
-## ダウンロード
-
-Pull Requestと作業ブランチのCIは、次を一つのActions成果物へ保存します。
-
-- `MouseButtonMapper-v8.4.0-rc2.exe`
-- `MouseButtonMapper-v8.4.0-rc2-windows-x64.zip`
-- `MouseButtonMapper-v8.4.0-rc2-source.zip`
-- `MouseButtonMapper-v8.4.0-rc2-SHA256SUMS.txt`
-
-タグ`v*`をpushすると、Release workflowが同じ形式の成果物をGitHub Releasesへ登録します。
-
-## ローカルビルド
+## ローカル検証
 
 Go 1.23以上が必要です。
 
@@ -70,28 +67,16 @@ $env:CGO_ENABLED = "0"
 go test ./...
 go vet -unsafeptr=false ./...
 go build -trimpath -ldflags="-s -w -H=windowsgui" -o MouseButtonMapper.exe .
-.\MouseButtonMapper.exe --self-test
-```
-
-LinuxまたはmacOSからWindows版をクロスコンパイルする場合:
-
-```bash
-GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
-  go build -trimpath -ldflags='-s -w -H=windowsgui' \
-  -o MouseButtonMapper.exe .
 ```
 
 ## 開発前に読む資料
 
-1. [`docs/HANDOFF.md`](docs/HANDOFF.md) — 正本・現在地・禁止事項
-2. [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — 構造と不変条件
-3. [`docs/REGRESSION_CHECKLIST.md`](docs/REGRESSION_CHECKLIST.md) — Windows実機確認
-4. [`CONTRIBUTING.md`](CONTRIBUTING.md) — 変更手順
-
-## Tauriについて
-
-安定版へのTauri導入は見送っています。理由と将来の安全な移行条件は[`docs/TAURI_ASSESSMENT.md`](docs/TAURI_ASSESSMENT.md)に記載しています。
+1. [`docs/HANDOFF.md`](docs/HANDOFF.md)
+2. [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+3. [`docs/REGRESSION_CHECKLIST.md`](docs/REGRESSION_CHECKLIST.md)
+4. [`docs/RELEASE.md`](docs/RELEASE.md)
+5. [`CONTRIBUTING.md`](CONTRIBUTING.md)
 
 ## ライセンス
 
-公開リポジトリですが、現時点ではオープンソースライセンスを付与していません。詳細は[`LICENSE`](LICENSE)を参照してください。
+現時点ではオープンソースライセンスを付与していません。詳細は[`LICENSE`](LICENSE)を参照してください。

@@ -218,6 +218,13 @@ func (w *XInputWorker) publishStatus() {
 }
 
 func (a *App) startXInputSubsystem() {
+	a.mu.RLock()
+	enabled := a.config.Controller.Enabled
+	alreadyRunning := a.xInputCancel != nil
+	a.mu.RUnlock()
+	if !enabled || alreadyRunning {
+		return
+	}
 	worker, err := NewXInputWorker(a.handleXInputInputEvent, func(status XInputConnectionStatus) {
 		a.mu.Lock()
 		a.xInputStatus = status
@@ -234,6 +241,11 @@ func (a *App) startXInputSubsystem() {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	a.mu.Lock()
+	if !a.config.Controller.Enabled || a.xInputCancel != nil {
+		a.mu.Unlock()
+		cancel()
+		return
+	}
 	a.xInputCancel = cancel
 	a.xInputDone = done
 	a.xInputStatus = XInputConnectionStatus{Available: true, DLL: worker.api.name}
@@ -272,6 +284,9 @@ func (a *App) handleXInputInputEvent(event InputEvent) {
 }
 
 func (a *App) xInputStatusTextLocked() string {
+	if !a.config.Controller.Enabled {
+		return "XInput機能は無効"
+	}
 	if a.xInputStatus.LastError != "" {
 		return "XInput利用不可: " + a.xInputStatus.LastError
 	}

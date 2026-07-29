@@ -98,7 +98,8 @@ func newJoyConCalibrationTestApp() *App {
 	stick := defaultJoyConStickConfig()
 	return &App{
 		config: Config{
-			Version:         9,
+			Version:         10,
+			Controller:      ControllerFeatureConfig{Enabled: true},
 			ActiveProfileId: "profile-a",
 			Profiles: []Profile{
 				{Id: "profile-a", Name: "Duplicate", JoyCon: JoyConProfileConfig{Stick: stick}},

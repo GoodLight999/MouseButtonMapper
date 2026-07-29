@@ -1,5 +1,19 @@
 # Changelog
 
+## 8.4.0-rc3
+
+- Joy-Con／Switch互換Raw HID／XInputを一括して停止・非表示にする全体オプトイン設定を追加
+- 新規設定とVersion 9以前からの移行ではコントローラー機能を既定OFFに変更
+- OFF時はHID列挙、XInput polling、コントローラーevent処理、controller rule実行を停止
+- OFFでも保存済みcontroller rule、profile別Joy-Con設定、calibration、Stable IDを削除せず保持
+- OFF時もmouse/key rule、long press、profile switch、自動切替が継続するようruntime stateを分離
+- controller Hold／long-press中にOFFへ切り替えた場合の安全解放を追加
+- 詳細controller UIとHold設定をON時だけ表示し、再有効化用のglobal toggleだけを常時表示
+- BetterJoy／JoyToKeyへ入力処理を外注する構成をUI・README・引き継ぎ資料へ明記
+- XInput入力が長押しkey生成とvalidationから漏れていた不具合を修正
+- controller OFFがmouse long-pressを巻き添えで消さない回帰試験を追加
+- Config.Versionを10へ更新し、RC成果物を8.4.0-rc3へ統一
+
 ## 8.4.0-rc2
 
 - 純正Joy-Con専用だったHID列挙を、Generic DesktopのGame Pad／Joystickコレクション候補まで拡張

@@ -1,27 +1,13 @@
-MouseButtonMapper v8.4.0-rc2 portable edition
+MouseButtonMapper 8.4.0-rc3 portable
 
-この版はJoy-Con（L）／Switch互換Raw HID／XInput実機検証用のRelease Candidateです。
-安定版8.3.0を置き換える前に、別フォルダーで動作確認してください。
+1. MouseButtonMapper.exe を任意のフォルダーから起動してください。
+2. 設定は %LOCALAPPDATA%\MouseButtonMapper\config.json に保存されます。
+3. ゲームコントローラー機能は実験機能のため、初期状態では完全にOFFです。
+4. Joy-Con／互換Raw HID／XInputを試す場合だけ、設定画面の
+   「Joy-Con／互換Raw HID／XInput機能を有効にする」をONにしてください。
+5. OFF時はHID列挙、XInput監視、コントローラールール実行を停止し、詳細設定を隠します。
+   保存済み設定は削除されません。
+6. BetterJoyやJoyToKeyへ処理を任せる場合はOFFのまま使用できます。
+7. 緊急停止は Ctrl + Alt + Shift + F12 です。
 
-1. MouseButtonMapper.exeを任意のフォルダーへ置いて起動します。
-2. 自動起動する場合はAdd_Startup_Shortcut.cmdを一度実行します。
-3. 自動起動を外す場合はRemove_Startup_Shortcut.cmdを実行します。
-4. 操作不能時はCtrl+Alt+Shift+F12、またはEmergency_Stop_MouseButtonMapper.cmdを使います。
-
-設定は次へ保存され、配布フォルダーを削除しても残ります。
-%LOCALAPPDATA%\MouseButtonMapper\config.json
-
-旧インストール方式だけを消し、設定を残す場合:
-Remove_Legacy_Install_Keep_Config.cmd
-
-Joy-Con（L）:
-- Windows Bluetooth設定でJoy-Con（L）を通常ペアリングします。
-- 設定画面でJoy-Conを有効にし、Joy-Conを接続・再検索を押します。
-- ゲームコントローラー入力を記録し、必要ならスティックをキャリブレーションします。
-- 自動認識されない互換品は「優先するJoy-Con／互換HID識別子」の候補を選んで保存します。
-- 互換Raw HIDを初めて確認するときは、デバイス占有を避けるためSteamを完全終了してください。
-- XInputコントローラーは最大4台を自動検出します。
-- BetterJoy、ViGEmBus、HidHideは必須ではありません。
-- ゲーム側も物理コントローラーを読む場合は二重入力になり得ます。
-
-長押し設定は、割り当て編集欄の「この割り当てで長押し判定を使う」から設定します。
+これはDraft PR #5の実機検証用Release Candidateであり、安定版ではありません。
