@@ -237,8 +237,8 @@ func TestNormalizeConfigKeepsV8RulesCompatible(t *testing.T) {
 	}
 
 	got := normalizeConfig(cfg)
-	if got.Version != 9 {
-		t.Fatalf("config version = %d, want 9", got.Version)
+	if got.Version != 10 {
+		t.Fatalf("config version = %d, want 10", got.Version)
 	}
 	r := got.Profiles[0].Rules[0]
 	if r.LongPressEnabled {
