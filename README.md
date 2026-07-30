@@ -4,24 +4,24 @@ Windows向けの多ボタンマウス割り当てツールです。マウス／�
 
 ## 現在の配布候補
 
-- バージョン: **8.4.0-rc3**
+- バージョン: **8.4.0-rc4**
 - 対象: Windows x64
 - 安定版: `main`の8.3.0
 - 開発版: Draft PR #5の実機検証用RC
 - 設定保存先: `%LOCALAPPDATA%\MouseButtonMapper\config.json`
 
-## 重要: コントローラー機能は初期状態でOFF
+## 重要: コントローラー機能は初期状態で非表示・OFF
 
-ゲームコントローラー対応は実験機能です。新規設定および旧設定からの移行では、次の全体スイッチがOFFになります。
+ゲームコントローラー対応は実験機能です。新規設定および旧設定からの移行では、専用UI自体を表示せず、workerも起動しません。再表示する場合だけ「動作状態と管理」にある小さな`実験機能を表示`を押します。
 
-`Joy-Con／互換Raw HID／XInput機能を有効にする`
+表示後は`機能を停止して設定画面から隠す`で、入力処理を停止し、専用設定を再び画面から消せます。
 
 OFFの間は次の動作になります。
 
 - Joy-Con／互換HIDの列挙・接続を行わない
 - XInput DLLのポーリングを行わない
 - コントローラー由来の入力イベントを無視する
-- コントローラー詳細設定とHold設定を隠す
+- コントローラー専用セクション、詳細設定、Hold設定をDOMから除去する
 - 保存済みコントローラールールは削除せず、実行対象からだけ外す
 - マウス／キーボード機能、長押し、プロファイル、自動切替は通常どおり動作する
 
@@ -41,22 +41,23 @@ BetterJoyやJoyToKeyへコントローラー処理を任せる場合は、全体
 
 ## コントローラーを試す場合
 
-1. 設定画面で全体スイッチをONにします。
-2. 純正Joy-Conは通常ペアリング後、`Joy-Conを接続・再検索`を押します。
-3. 互換品はSteamを完全終了し、候補一覧からStable IDを明示選択します。
-4. XInput機器はP1～P4として自動検出されます。
-5. `ゲームコントローラー入力を記録`から割り当てます。
+1. 「動作状態と管理」の`実験機能を表示`を押し、コントローラー入力をONにします。
+2. 純正Joy-Conは通常ペアリング後、`HID一覧を更新・再接続`を押します。
+3. 互換品はSteamを完全終了し、Windowsが公開する全HIDインターフェース一覧から対象を1つ選び、左Joy-Con互換として保存します。
+4. 一覧はキーボードやマウス等も含み得るため、対象の製品名・VID/PID・serialを確認して明示選択してください。未知HIDは自動接続しません。
+5. XInput機器はP1～P4として自動検出されます。
+6. `ゲームコントローラー入力を記録`から割り当てます。
 
-互換品が未対応reportを送る場合、診断へreport長と先頭hexを残します。コントローラー入力はゲーム側から隠さないため、二重入力が発生する場合は全体スイッチをOFFにし、BetterJoy／JoyToKey／HidHide等の外部構成を検討してください。
+互換品登録はBetterJoyの3rd-party controller方式を参考に、VID/PID/serialと正確なHID interface fingerprintを保存します。書込み可能ならNintendo初期化を試し、拒否された場合だけread-onlyへ縮退します。未対応reportは長さと先頭hexを診断へ残します。コントローラー入力はゲーム側から隠さないため、二重入力が発生する場合は全体スイッチをOFFにし、BetterJoy／JoyToKey／HidHide等の外部構成を検討してください。
 
 ## CI成果物
 
 Draft PRと作業ブランチのCIは、同一headから次を生成します。
 
-- `MouseButtonMapper-v8.4.0-rc3.exe`
-- `MouseButtonMapper-v8.4.0-rc3-windows-x64.zip`
-- `MouseButtonMapper-v8.4.0-rc3-source.zip`
-- `MouseButtonMapper-v8.4.0-rc3-SHA256SUMS.txt`
+- `MouseButtonMapper-v8.4.0-rc4.exe`
+- `MouseButtonMapper-v8.4.0-rc4-windows-x64.zip`
+- `MouseButtonMapper-v8.4.0-rc4-source.zip`
+- `MouseButtonMapper-v8.4.0-rc4-SHA256SUMS.txt`
 
 ## ローカル検証
 

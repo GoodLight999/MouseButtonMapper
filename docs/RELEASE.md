@@ -12,10 +12,10 @@
    - Windows test/vet
    - Windows GUI build
 5. 同じheadから次を生成する。
-   - `MouseButtonMapper-v8.4.0-rc3.exe`
-   - `MouseButtonMapper-v8.4.0-rc3-windows-x64.zip`
-   - `MouseButtonMapper-v8.4.0-rc3-source.zip`
-   - `MouseButtonMapper-v8.4.0-rc3-SHA256SUMS.txt`
+   - `MouseButtonMapper-v8.4.0-rc4.exe`
+   - `MouseButtonMapper-v8.4.0-rc4-windows-x64.zip`
+   - `MouseButtonMapper-v8.4.0-rc4-source.zip`
+   - `MouseButtonMapper-v8.4.0-rc4-SHA256SUMS.txt`
 6. 独立検算する。
    - artifact digest
    - manifest SHA-256
@@ -25,15 +25,18 @@
 7. PR本文へfinal head、CI run、artifact ID、SHA-256、未確認実機項目を記録する。
 8. RCは実機試験用と明記し、stable tagを付けない。
 
-## rc3必須回帰
+## rc4必須回帰
 
-- fresh/old configでcontroller featureがdefault OFF
+- fresh/old configでcontroller featureがdefault非表示・OFF
 - OFF時にJoy-Con／XInput workerが起動しない
 - OFF時にlate controller eventを無視する
 - OFF時にcontroller ruleをactive rulesから外すが保存データは維持する
 - OFF時もmouse/key ruleとlong-pressが動く
 - controller Hold中のOFFでowned keyをreleaseする
+- 一般管理欄のrestoreからUIを再表示でき、hide操作で専用sectionをDOMから除去できる
 - ONへ戻すと保存済みruleと詳細UIが復帰する
+- vendor-specific HIDを含む全interfaceがmanual登録候補へ出る
+- 未登録HIDを自動Openせず、登録済みexact fingerprintだけをOpenする
 - XInput long-press key／validationが動く
 
 ## Stable release

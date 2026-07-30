@@ -66,15 +66,15 @@ func TestChooseJoyConDevice(t *testing.T) {
 		{VendorID: joyConNintendoVendorID, ProductID: joyConLeftProductID, Serial: "left-a"},
 		{VendorID: joyConNintendoVendorID, ProductID: joyConLeftProductID, Serial: "left-b"},
 	}
-	selected, ok := chooseJoyConDevice(devices, "serial:left-b")
+	selected, ok := chooseJoyConDevice(devices, JoyConProfileConfig{PreferredDevice: "serial:left-b"})
 	if !ok || selected.Serial != "left-b" {
 		t.Fatalf("preferred selection=%+v ok=%v", selected, ok)
 	}
-	selected, ok = chooseJoyConDevice(devices, "missing")
+	selected, ok = chooseJoyConDevice(devices, JoyConProfileConfig{PreferredDevice: "missing"})
 	if !ok || selected.Serial != "left-a" {
 		t.Fatalf("fallback selection=%+v ok=%v", selected, ok)
 	}
-	if _, ok := chooseJoyConDevice(devices[:1], ""); ok {
+	if _, ok := chooseJoyConDevice(devices[:1], JoyConProfileConfig{}); ok {
 		t.Fatal("non-Joy-Con device was selected")
 	}
 }
@@ -146,14 +146,14 @@ func TestChoosePreferredGenericGamepadAsForcedCompatible(t *testing.T) {
 		UsagePage: hidUsagePageGenericDesktop,
 		Usage:     hidUsageGamePad,
 	}
-	selected, ok := chooseJoyConDevice([]JoyConDeviceInfo{device}, "path:clone-1")
+	selected, ok := chooseJoyConDevice([]JoyConDeviceInfo{device}, JoyConProfileConfig{CompatibleDevice: manualJoyConDeviceConfig(device)})
 	if !ok || !selected.ForcedCompatible {
 		t.Fatalf("manual compatible selection=%+v ok=%v", selected, ok)
 	}
 	if !selected.CanOpenAsCompatibleJoyCon() {
 		t.Fatal("manual compatible device cannot be opened")
 	}
-	if _, ok := chooseJoyConDevice([]JoyConDeviceInfo{device}, ""); ok {
+	if _, ok := chooseJoyConDevice([]JoyConDeviceInfo{device}, JoyConProfileConfig{}); ok {
 		t.Fatal("unknown generic gamepad was auto-selected without opt-in")
 	}
 }
@@ -175,12 +175,72 @@ func TestShouldOpenJoyConInputOnlyDistinguishesUnknownCapsFromNoOutput(t *testin
 	if shouldOpenJoyConInputOnly(knownWithoutCaps) {
 		t.Fatal("known Joy-Con with unavailable HID caps was incorrectly forced read-only")
 	}
-	forced := JoyConDeviceInfo{ForcedCompatible: true, InputReportLength: 64}
-	if !shouldOpenJoyConInputOnly(forced) {
-		t.Fatal("manually selected unknown HID candidate was not opened conservatively")
+	forcedWritable := JoyConDeviceInfo{ForcedCompatible: true, InputReportLength: 64, OutputReportLength: 64}
+	if shouldOpenJoyConInputOnly(forcedWritable) {
+		t.Fatal("manually registered writable HID candidate must try Nintendo R/W setup before read-only fallback")
 	}
 	compact := JoyConDeviceInfo{InputReportLength: 8, OutputReportLength: 8}
 	if !shouldOpenJoyConInputOnly(compact) {
 		t.Fatal("compact input-only controller was not detected")
+	}
+}
+
+func TestManualJoyConRegistrationSelectsVendorSpecificInterface(t *testing.T) {
+	device := JoyConDeviceInfo{
+		Fingerprint: "vendor-specific", VendorID: 0x1234, ProductID: 0xabcd,
+		Product: "Wireless Gamepad", UsagePage: 0xff00, Usage: 0x01,
+		InputReportLength: 64, OutputReportLength: 64,
+	}
+	config := JoyConProfileConfig{CompatibleDevice: manualJoyConDeviceConfig(device)}
+	selected, ok := chooseJoyConDevice([]JoyConDeviceInfo{device}, config)
+	if !ok || !selected.ForcedCompatible || selected.ControllerType != joyConTypeLeft {
+		t.Fatalf("vendor-specific manual selection=%+v ok=%v", selected, ok)
+	}
+}
+
+func TestManualJoyConRegistrationPrefersExactInterfaceFingerprint(t *testing.T) {
+	first := JoyConDeviceInfo{Fingerprint: "if-a", VendorID: 0x1234, ProductID: 0xabcd, Serial: "same"}
+	second := JoyConDeviceInfo{Fingerprint: "if-b", VendorID: 0x1234, ProductID: 0xabcd, Serial: "same"}
+	config := JoyConProfileConfig{CompatibleDevice: manualJoyConDeviceConfig(second)}
+	selected, ok := chooseJoyConDevice([]JoyConDeviceInfo{first, second}, config)
+	if !ok || selected.Fingerprint != "if-b" {
+		t.Fatalf("exact interface selection=%+v ok=%v", selected, ok)
+	}
+}
+
+func TestManualJoyConRegistrationFallsBackToSerialAfterPathChanges(t *testing.T) {
+	registered := JoyConDeviceInfo{Fingerprint: "old-path", VendorID: 0x1234, ProductID: 0xabcd, Serial: "same"}
+	reconnected := JoyConDeviceInfo{Fingerprint: "new-path", VendorID: 0x1234, ProductID: 0xabcd, Serial: "same"}
+	config := JoyConProfileConfig{CompatibleDevice: manualJoyConDeviceConfig(registered)}
+	selected, ok := chooseJoyConDevice([]JoyConDeviceInfo{reconnected}, config)
+	if !ok || selected.Fingerprint != "new-path" {
+		t.Fatalf("serial fallback selection=%+v ok=%v", selected, ok)
+	}
+}
+
+func TestParseJoyConVIDPIDFromPath(t *testing.T) {
+	vid, pid := parseJoyConVIDPIDFromPath(`\\?\hid#vid_20D6&pid_A711&mi_00#example`)
+	if vid != 0x20d6 || pid != 0xa711 {
+		t.Fatalf("vid/pid=%04x/%04x", vid, pid)
+	}
+}
+
+func TestUnknownProductNamedJoyConStillRequiresManualRegistration(t *testing.T) {
+	device := JoyConDeviceInfo{Fingerprint: "clone", VendorID: 0x1234, ProductID: 0xabcd, Product: "Joy-Con (L)"}
+	if !device.IsLeftJoyCon() {
+		t.Fatal("product classification should remain available for diagnostics")
+	}
+	if _, ok := chooseJoyConDevice([]JoyConDeviceInfo{device}, JoyConProfileConfig{}); ok {
+		t.Fatal("unknown VID/PID clone was auto-opened without explicit registration")
+	}
+}
+
+func TestManualJoyConSerialFallbackRejectsAmbiguousInterfaces(t *testing.T) {
+	registered := JoyConDeviceInfo{Fingerprint: "old", VendorID: 0x1234, ProductID: 0xabcd, Serial: "same"}
+	first := JoyConDeviceInfo{Fingerprint: "new-a", VendorID: 0x1234, ProductID: 0xabcd, Serial: "same"}
+	second := JoyConDeviceInfo{Fingerprint: "new-b", VendorID: 0x1234, ProductID: 0xabcd, Serial: "same"}
+	config := JoyConProfileConfig{CompatibleDevice: manualJoyConDeviceConfig(registered)}
+	if _, ok := chooseJoyConDevice([]JoyConDeviceInfo{first, second}, config); ok {
+		t.Fatal("ambiguous serial fallback selected an arbitrary HID interface")
 	}
 }

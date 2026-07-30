@@ -1,15 +1,15 @@
 # Regression Checklist
 
-## ゲームコントローラー全体ゲート（rc3必須）
+## ゲームコントローラー全体ゲート（rc4必須）
 
 - [ ] 新規設定では全体スイッチがOFFで起動する
 - [ ] Version 9以前の設定を読み込んでも暗黙にONにならない
-- [ ] OFF時はcontroller詳細設定とHold欄が隠れ、再有効化toggleだけが見える
+- [ ] 非表示時はcontroller専用sectionとHold欄がDOMに存在せず、一般管理欄の小さな`実験機能を表示`だけが見える
 - [ ] OFF時にJoy-Con／互換HIDの列挙・Open・再接続を行わない
 - [ ] OFF時にXInput workerを起動せず、P1～P4をpollしない
 - [ ] worker停止直前に届いた遅延HID／XInput eventを無視する
 - [ ] OFF時はcontroller入力を含むruleを実行しない
-- [ ] OFFへ切り替えても保存済みcontroller rule、Joy-Con設定、Stable IDを削除しない
+- [ ] `機能を停止して設定画面から隠す`でworkerが停止し、保存済みcontroller rule、Joy-Con設定、manual HID registrationを削除しない
 - [ ] OFF→ONで保存済みcontroller ruleと詳細設定が復帰する
 - [ ] OFF中もmouse/key rule、short/long press、profile switch、自動切替が動く
 - [ ] mouse/key long-press中にcontrollerをOFFにしてもその状態を巻き添えで消さない
@@ -86,15 +86,15 @@
 - [ ] 再接続後に入力が自動復帰する
 - [ ] スリープ復帰後に再接続できる
 - [ ] Joy-Con未接続でも既存マウス・キーボード機能が起動・動作する
-- [ ] キーボード、マウス、Consumer Control等を互換候補へ表示・接続しない
-- [ ] Game Pad／Joystick HID候補に製品名、VID/PID、Stable ID、入力report長が表示される
-- [ ] 未知VID/PID候補は自動接続されず、Stable IDを明示選択した場合だけ開く
-- [ ] 選択した互換HIDは最初にread-onlyで開き、無差別なNintendoサブコマンドを送らない
+- [ ] 全HID interface（vendor-specificを含む）を列挙し、キーボード／マウス等を誤登録しないための警告が表示される
+- [ ] 候補に製品名、manufacturer、VID/PID、serialまたはfingerprint、Usage、入出力report長が表示される
+- [ ] 未知VID/PID候補は自動接続されず、一覧から正確なHID interfaceを明示登録した場合だけ開く
+- [ ] 明示登録した互換HIDはR/W OpenとNintendo report-mode初期化を試し、拒否時だけread-onlyへfallbackする
 - [ ] Steamを完全終了した状態で互換HIDをOpen・Readできる
 - [ ] 既知の`0x30`／`0x21`／`0x3f`報告を正しい経路で解析する
 - [ ] 7バイトまたは先頭0付き8バイトのinput-only報告を解析する
 - [ ] 未知reportをボタン入力へ誤変換せず、長さと先頭hexを診断へ表示する
-- [ ] 非Joy-Con HIDデバイスを誤接続しない
+- [ ] 登録していない非Joy-Con HIDデバイスを誤接続しない
 
 ## Joy-Con（L）ボタン
 

@@ -262,14 +262,17 @@ func TestJoyConUIIsHookedIntoEmbeddedWebApp(t *testing.T) {
 		t.Fatal("embedded web app does not load the Joy-Con UI script")
 	}
 	for _, required := range []string{
-		"Joy-Conを接続・再検索",
+		"HID一覧を更新・再接続",
 		"ゲームコントローラー入力を記録",
-		"選択中の割り当てへ最後のコントローラー入力を設定",
-		"Joy-Con接続・スティック設定を保存",
+		"選択中の割り当てへ最後の入力を設定",
+		"登録・接続・スティック設定を保存",
 		"キャリブレーションを開始",
 		"選択中の割り当てを保存",
 		"xInputStatusText",
-		"joyDeviceOptions",
+		"joyCompatibleDevice",
+		"互換品を左Joy-Conとして手動登録",
+		"機能を停止して設定画面から隠す",
+		"実験機能を表示",
 		"joyRuleMode",
 	} {
 		if !strings.Contains(joyConUIJS, required) {

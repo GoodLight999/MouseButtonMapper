@@ -8,7 +8,7 @@
 - 安定版: `main` / `8.3.0`
 - 開発branch: `feature/joycon-l`
 - Draft PR: `#5`
-- 現在のRC: `8.4.0-rc3`
+- 現在のRC: `8.4.0-rc4`
 - branch起点: `3126d531cff93c519bdf3634847d553033787940`
 - 最終head、全緑CI run、artifact ID、SHA-256: PR #5本文を正本とする
 
@@ -20,16 +20,16 @@ MouseButtonMapperの中核は、安定したマウス／キーボード割り当
 
 ### 全体コントローラーゲート
 
-`Config.Controller.Enabled`が全入力経路の唯一の全体ゲートです。
+`Config.Controller.Enabled`が全入力経路の実行ゲート、`Config.Controller.Visible`が専用UIの表示ゲートです。
 
-- `Config.Version`: 10
-- 新規設定: OFF
-- Version 9以前からの移行: OFF
+- `Config.Version`: 11
+- 新規設定: `Visible=false / Enabled=false`
+- Version 10以前からの移行: Enabledだった場合だけVisibleを維持。それ以外は非表示・OFF
 - OFF時:
   - Joy-Con／互換Raw HID workerを起動しない
   - XInput workerを起動しない
   - 遅れて届くコントローラーイベントを無視する
-  - コントローラー詳細UIとHold設定を隠す
+  - コントローラー専用sectionとHold設定をDOMから削除する
   - コントローラー入力を含むルールをactive rulesから外す
   - 保存済みrule／profile／Joy-Con設定は削除しない
   - コントローラー由来の長押し・Hold・DOWN状態を解放する
@@ -38,7 +38,7 @@ MouseButtonMapperの中核は、安定したマウス／キーボード割り当
   - Joy-Con／互換HIDとXInput subsystemを開始する
   - 保存済みコントローラールールを再びactive rulesへ含める
 
-BetterJoy／JoyToKeyへ外注する場合はOFFのまま使う。外部ツールが生成するキーボード／マウス入力は通常経路で処理できる。
+UIの`機能を停止して設定画面から隠す`はVisibleとEnabledを同時にfalseへ変更する。隠した後は一般管理欄の小さな`実験機能を表示`だけを残す。BetterJoy／JoyToKeyへ外注する場合は非表示・OFFのまま使う。外部ツールが生成するキーボード／マウス入力は通常経路で処理できる。
 
 ## 3. 実装済み機能
 
@@ -54,11 +54,13 @@ BetterJoy／JoyToKeyへ外注する場合はOFFのまま使う。外部ツール
 ### 任意コントローラー入力
 
 - 純正Joy-Con（L）: Nintendo HID `057e:2006`
-- Switch互換Raw HID:
-  - Generic Desktop Game Pad／Joystickだけを候補化
-  - 未知VID/PIDは自動接続せずStable IDを手動選択
+- Switch互換Raw HID（rc4でBetterJoy方式へ修正）:
+  - SetupAPIでWindowsが公開する全HID interfaceを列挙する。Usageによる事前除外はしない
+  - unknown HIDは自動接続せず、UIで明示選択した正確なpath fingerprintだけを左Joy-Con互換として登録
+  - 登録にはVID/PID/serial/fingerprint/productを保存し、再接続時はfingerprint優先・serial fallbackで照合
+  - 選択済みinterfaceだけをOpenする。書込み可能ならNintendo `0x03` report-mode commandを試し、Open/Write拒否時だけread-onlyへ縮退
   - `0x21`、`0x30`、`0x3f`、7バイト／先頭0付き8バイトinput-only報告
-  - 書込み非対応時のread-only fallback
+  - metadata取得失敗interfaceもpath fingerprint、path由来VID/PID、inspect error付きで候補へ残す
   - 未対応report長と先頭hexの診断
 - XInput:
   - `xinput1_4`→`xinput1_3`→`xinput9_1_0`の順で動的ロード
@@ -76,11 +78,23 @@ BetterJoy／JoyToKeyへ外注する場合はOFFのまま使う。外部ツール
 - rc1が互換Joy-Conを認識しなかった主因は、列挙とOpenの双方で純正VID/PIDだけを許可していたこと。
 - Steamだけが入力を取れる互換品は、Windows XInput／通常DirectInputではなくSwitch系Raw HIDをSteam/SDLが直接解釈している可能性が高い。
 - rc2でRaw HID候補とXInputを追加した。
-- rc3でコントローラー機能をdefault OFFの全体ゲート配下へ移動した。
+- rc3でコントローラー機能をdefault OFFへ移動したが、専用の大きな有効化sectionが常時残り、「設定画面から隠す」という要求を満たしていなかった。
+- rc4でVisibleとEnabledを分離し、専用UIをDOMから完全除去できるよう修正した。
+- rc4でBetterJoyの`hid_enumerate(0,0)`＋manual 3rd-party registrationを確認し、Usage-filterと自由入力Stable IDを廃止した。
 - rc3監査で、XInput長押しのkey生成／validationがJoy-Conだけに限定されていた不具合を修正した。
 - コントローラーOFF処理がマウス／キーボード長押しまで全消去しないことを回帰試験で固定した。
 
-## 5. 並行処理の不変条件
+## 5. 先行実装として確認したBetterJoyコード
+
+rc4では一般論ではなく、`Davidobot/BetterJoy`の次の実コードを確認した。
+
+- `BetterJoyForCemu/Program.cs`: `hid_enumerate(0x0, 0x0)`で全HIDを列挙し、custom controllerをVID/PID/serialで照合してexact pathを`hid_open_path`する
+- `BetterJoyForCemu/3rdPartyControllers.cs`: 全HID一覧からユーザーが対象を選び、Pro／Left Joycon／Right Joyconのtypeを明示指定して保存する
+- `BetterJoyForCemu/Joycon.cs`: Nintendo output report長49、Attach時のreport-mode初期化とthird-party controller分岐
+
+MouseButtonMapperはBetterJoyのコードをコピーしていない。互換品の入口設計として、全HID列挙・明示登録・exact path Openという方式を再実装した。現段階ではLeft Joy-Con互換だけを登録対象とする。
+
+## 6. 並行処理の不変条件
 
 - `WH_MOUSE_LL`／`WH_KEYBOARD_LL` callbackでSleep、HID I/O、設定保存、ファイルlog、`SendInput`を行わない。
 - 出力は`actionCh`へ渡し、output workerが実行する。
@@ -91,18 +105,19 @@ BetterJoy／JoyToKeyへ外注する場合はOFFのまま使う。外部ツール
 - 物理的に押されているキーを合成UPで解放しない。
 - コントローラー失敗は正常な縮退状態であり、マウス／キーボード機能を止めない。
 
-## 6. 設定互換性
+## 7. 設定互換性
 
 ```text
-Config.Version = 10
+Config.Version = 11
+Config.Controller.Visible = false  // default
 Config.Controller.Enabled = false  // default
 Profile.JoyCon                    // optional, preserved while global OFF
 Rule.Input Kind                   // Mouse / Key / JoyCon / XInput
 ```
 
-全体OFFは設定削除ではなくruntime filteringで実現する。ON/OFFのたびにrule、profile、calibration、Stable IDを消してはいけない。
+全体OFFは設定削除ではなくruntime filteringで実現する。ON/OFFのたびにrule、profile、calibration、manual HID registrationを消してはいけない。
 
-## 7. 主要ファイル
+## 8. 主要ファイル
 
 - `main.go`: App、Config、rule rebuild、HTTP API、hooks、profiles
 - `controller_feature_windows.go`: 全体ゲート、worker同期、API
@@ -114,12 +129,12 @@ Rule.Input Kind                   // Mouse / Key / JoyCon / XInput
 - `joycon_app_windows.go`: Joy-Con subsystem接続
 - `xinput_logic.go`: XInput差分と閾値
 - `xinput_windows.go`: DLL load、P1～P4 polling
-- `joycon_ui_windows.go`: 全体toggleと詳細UI
+- `joycon_ui_windows.go`: true-hide UI、generic restore control、全HID manual registration list
 - `joycon_web_windows.go`: controller/Joy-Con API state
 - `controller_feature_windows_test.go`: default OFF、worker停止、rule保存、late event、長押し分離
 - `docs/REGRESSION_CHECKLIST.md`: 実機検証正本
 
-## 8. 必須自動検証
+## 9. 必須自動検証
 
 ```text
 gofmt
@@ -140,11 +155,11 @@ UI JavaScriptは抽出して`node --check`も行う。最終配布は同一branc
 - source ZIP commentと最終head SHAの一致
 - PE32+ Windows GUI x86-64
 
-## 9. 実機ゲート
+## 10. 実機ゲート
 
 ### 全体OFF
 
-- 起動直後に詳細controller UIが隠れている
+- 起動直後にcontroller専用sectionが存在せず、一般管理欄の小さな実験機能restoreだけが見える
 - HID列挙／XInput監視が走らない
 - mouse/key rule、long press、profile switchが動く
 - BetterJoy／JoyToKeyのkeyboard/mouse出力を通常入力として扱える
@@ -154,7 +169,7 @@ UI JavaScriptは抽出して`node --check`も行う。最終配布は同一branc
 ### ON時
 
 - 純正Joy-Conの接続、全button、stick、battery、sleep/resume
-- 互換Raw HIDのcandidate選択、report診断、全input
+- 全HID interface一覧、対象のmanual registration、report診断、全input
 - XInput P1～P4のbuttons/triggers/sticks
 - disconnect/reconnect 20回
 - controller＋right-hand mouse/keyboard
@@ -163,21 +178,21 @@ UI JavaScriptは抽出して`node --check`も行う。最終配布は同一branc
 
 完了までは安定版と呼ばず、PRをReady／Mergeしない。
 
-## 10. 禁止事項
+## 11. 禁止事項
 
 - controller featureを暗黙にONへ移行しない。
 - OFF時に保存済みcontroller設定を削除しない。
 - OFF時にmouse/key stateやlong pressを巻き添えで消さない。
-- 未知HIDへ無差別にNintendo subcommandを送らない。
-- keyboard/mouse HIDをcontroller candidateにしない。
+- 未知HIDを自動選択・自動Openしない。Nintendo subcommandはユーザーが明示登録したinterfaceにだけ送る。
+- 全HIDを候補表示するため、UIに誤選択警告を必ず維持する。
 - hook callbackへHID/XInput処理を入れない。
 - 実機未検証を「完全対応」「安定版」と断定しない。
 - PR #5を実機確認前にmergeしない。
 
-## 11. 次の担当者が最初に行うこと
+## 12. 次の担当者が最初に行うこと
 
 1. PR #5本文で最終head／CI／artifactを確認する。
 2. `Controller.Enabled=false`のruntime pathを先に回帰確認する。
 3. `docs/REGRESSION_CHECKLIST.md`の全体ゲートから実機試験を始める。
-4. 互換品が未対応なら、診断に出るVID/PID、Usage、report length、先頭hexを基にparser testを先に追加する。
+4. 互換品が未対応なら、登録されたVID/PID/serial/fingerprint、report length、先頭hexを基にparser testを先に追加する。
 5. 全hardware gate完了後だけ8.4.0 stable化を検討する。

@@ -13,6 +13,7 @@ import (
 // from the active rule set without being deleted from config.json.
 type ControllerFeatureConfig struct {
 	Enabled bool `json:"Enabled"`
+	Visible bool `json:"Visible"`
 }
 
 func ruleUsesControllerInput(rule Rule) bool {
@@ -61,11 +62,14 @@ func (a *App) syncControllerSubsystems() {
 
 func (a *App) setControllerFeatureEnabled(enabled bool) error {
 	a.mu.Lock()
-	previous := a.config.Controller.Enabled
+	previous := a.config.Controller
 	a.config.Controller.Enabled = enabled
+	if enabled {
+		a.config.Controller.Visible = true
+	}
 	a.rebuildRulesWithoutJoyConRescanLocked()
 	if err := a.saveConfigLocked(); err != nil {
-		a.config.Controller.Enabled = previous
+		a.config.Controller = previous
 		a.rebuildRulesWithoutJoyConRescanLocked()
 		a.mu.Unlock()
 		return err
@@ -85,7 +89,35 @@ func (a *App) setControllerFeatureEnabled(enabled bool) error {
 }
 
 type controllerFeatureRequest struct {
-	Enabled bool `json:"enabled"`
+	Op      string `json:"op"`
+	Enabled bool   `json:"enabled"`
+}
+
+func (a *App) setControllerFeatureVisible(visible bool) error {
+	a.mu.Lock()
+	previous := a.config.Controller
+	a.config.Controller.Visible = visible
+	// Hiding is an explicit opt-out. Never leave a hidden controller worker
+	// running where the user cannot see or stop it from the settings screen.
+	if !visible {
+		a.config.Controller.Enabled = false
+		a.rebuildRulesWithoutJoyConRescanLocked()
+		a.clearControllerInputStateLocked("controller UI hidden")
+	}
+	if err := a.saveConfigLocked(); err != nil {
+		a.config.Controller = previous
+		a.rebuildRulesWithoutJoyConRescanLocked()
+		a.mu.Unlock()
+		return err
+	}
+	a.postUIRefreshLocked()
+	a.mu.Unlock()
+	if !visible {
+		a.releaseJoyConHeldOutputs()
+		a.syncControllerSubsystems()
+	}
+	a.logf("controller UI visibility changed: visible=%v", visible)
+	return nil
 }
 
 func (a *App) webAPIControllerFeature(w http.ResponseWriter, r *http.Request) {
@@ -98,13 +130,27 @@ func (a *App) webAPIControllerFeature(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if err := a.setControllerFeatureEnabled(req.Enabled); err != nil {
+	var err error
+	var message string
+	switch req.Op {
+	case "show-ui":
+		err = a.setControllerFeatureVisible(true)
+		message = "実験機能の設定を表示しました。ゲームコントローラー機能はまだ無効です。"
+	case "hide-ui":
+		err = a.setControllerFeatureVisible(false)
+		message = "ゲームコントローラー機能を停止し、設定画面から隠しました。"
+	case "", "set-enabled":
+		err = a.setControllerFeatureEnabled(req.Enabled)
+		message = "ゲームコントローラー機能を無効化しました。HID列挙とXInput監視は停止しています。"
+		if req.Enabled {
+			message = "ゲームコントローラー機能を有効化しました。Joy-Con／互換HID／XInputの設定を表示します。"
+		}
+	default:
+		err = fmt.Errorf("未知のコントローラー設定操作です: %s", req.Op)
+	}
+	if err != nil {
 		writeError(w, fmt.Errorf("コントローラー機能設定を保存できません: %w", err))
 		return
-	}
-	message := "ゲームコントローラー機能を無効化しました。HID列挙とXInput監視は停止しています。"
-	if req.Enabled {
-		message = "ゲームコントローラー機能を有効化しました。Joy-Con／互換HID／XInputの設定を表示します。"
 	}
 	writeJSON(w, map[string]any{
 		"ok":      true,

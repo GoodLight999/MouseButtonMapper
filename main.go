@@ -1444,8 +1444,14 @@ func normalizeConfig(cfg Config) Config {
 			cfg.ActiveProfileId = "default"
 		}
 	}
-	if cfg.Version < 10 {
-		cfg.Version = 10
+	if cfg.Version < 11 {
+		// rc3 had no real UI visibility setting. Preserve an actively enabled
+		// controller feature, but hide the disabled experimental UI on migration.
+		cfg.Controller.Visible = cfg.Controller.Enabled
+		cfg.Version = 11
+	}
+	if cfg.Controller.Enabled {
+		cfg.Controller.Visible = true
 	}
 	seenProfiles := map[string]bool{}
 	for i := range cfg.Profiles {
@@ -4376,8 +4382,8 @@ func (a *App) backupConfig() error {
 func (a *App) saveConfigLocked() error {
 	// フックコールバックと共有するa.muを保持したままディスクI/Oをしない。
 	// ここでは完全なJSONスナップショットだけを作り、専用ワーカーへ渡す。
-	if a.config.Version < 10 {
-		a.config.Version = 10
+	if a.config.Version < 11 {
+		a.config.Version = 11
 	}
 	a.config.SavedBy = appVersion
 	a.config.SavedAt = time.Now().Format(time.RFC3339)
@@ -4527,6 +4533,7 @@ type webState struct {
 	Rules                []webRule        `json:"rules"`
 	AutoSwitchEnabled    bool             `json:"autoSwitchEnabled"`
 	ControllerEnabled    bool             `json:"controllerEnabled"`
+	ControllerVisible    bool             `json:"controllerVisible"`
 	AutoDebounceMs       int              `json:"autoDebounceMs"`
 	AutoBindings         []webAutoBinding `json:"autoBindings"`
 	AutoMatchedBindingID string           `json:"autoMatchedBindingId"`
@@ -4898,6 +4905,7 @@ func (a *App) buildWebState() webState {
 		Rules:                rules,
 		AutoSwitchEnabled:    a.config.AutoSwitch.Enabled,
 		ControllerEnabled:    a.config.Controller.Enabled,
+		ControllerVisible:    a.config.Controller.Visible,
 		AutoDebounceMs:       a.config.AutoSwitch.DebounceMs,
 		AutoBindings:         autoBindings,
 		AutoMatchedBindingID: a.autoBindingID,

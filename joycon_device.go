@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -27,11 +28,55 @@ type JoyConReconnectConfig struct {
 	IntervalMs int  `json:"IntervalMs,omitempty"`
 }
 
+type JoyConManualDeviceConfig struct {
+	VendorID    uint16 `json:"VendorId,omitempty"`
+	ProductID   uint16 `json:"ProductId,omitempty"`
+	Serial      string `json:"Serial,omitempty"`
+	Fingerprint string `json:"Fingerprint,omitempty"`
+	Product     string `json:"Product,omitempty"`
+}
+
+func (c JoyConManualDeviceConfig) IsSet() bool {
+	return c.VendorID != 0 || c.ProductID != 0 || strings.TrimSpace(c.Serial) != "" || strings.TrimSpace(c.Fingerprint) != ""
+}
+
+func normalizeJoyConManualDeviceConfig(config JoyConManualDeviceConfig) JoyConManualDeviceConfig {
+	config.Serial = strings.TrimSpace(config.Serial)
+	config.Fingerprint = strings.ToLower(strings.TrimSpace(config.Fingerprint))
+	config.Product = strings.TrimSpace(config.Product)
+	return config
+}
+
+func (c JoyConManualDeviceConfig) matchesVIDPID(device JoyConDeviceInfo) bool {
+	return (c.VendorID == 0 || device.VendorID == c.VendorID) &&
+		(c.ProductID == 0 || device.ProductID == c.ProductID)
+}
+
+func (c JoyConManualDeviceConfig) MatchesExact(device JoyConDeviceInfo) bool {
+	c = normalizeJoyConManualDeviceConfig(c)
+	return c.IsSet() && c.matchesVIDPID(device) && c.Fingerprint != "" &&
+		strings.EqualFold(c.Fingerprint, strings.TrimSpace(device.Fingerprint))
+}
+
+func (c JoyConManualDeviceConfig) MatchesIdentity(device JoyConDeviceInfo) bool {
+	c = normalizeJoyConManualDeviceConfig(c)
+	return c.IsSet() && c.matchesVIDPID(device) && c.Serial != "" &&
+		strings.EqualFold(c.Serial, strings.TrimSpace(device.Serial))
+}
+
+func manualJoyConDeviceConfig(device JoyConDeviceInfo) JoyConManualDeviceConfig {
+	return normalizeJoyConManualDeviceConfig(JoyConManualDeviceConfig{
+		VendorID: device.VendorID, ProductID: device.ProductID,
+		Serial: device.Serial, Fingerprint: device.Fingerprint, Product: device.Product,
+	})
+}
+
 type JoyConProfileConfig struct {
-	Enabled         bool                  `json:"Enabled,omitempty"`
-	PreferredDevice string                `json:"PreferredDevice,omitempty"`
-	Stick           JoyConStickConfig     `json:"Stick,omitempty"`
-	Reconnect       JoyConReconnectConfig `json:"Reconnect,omitempty"`
+	Enabled          bool                     `json:"Enabled,omitempty"`
+	PreferredDevice  string                   `json:"PreferredDevice,omitempty"`
+	CompatibleDevice JoyConManualDeviceConfig `json:"CompatibleDevice,omitempty"`
+	Stick            JoyConStickConfig        `json:"Stick,omitempty"`
+	Reconnect        JoyConReconnectConfig    `json:"Reconnect,omitempty"`
 }
 
 func defaultJoyConProfileConfig() JoyConProfileConfig {
@@ -46,6 +91,7 @@ func defaultJoyConProfileConfig() JoyConProfileConfig {
 
 func normalizeJoyConProfileConfig(config JoyConProfileConfig) JoyConProfileConfig {
 	config.PreferredDevice = strings.TrimSpace(config.PreferredDevice)
+	config.CompatibleDevice = normalizeJoyConManualDeviceConfig(config.CompatibleDevice)
 	config.Stick = normalizeJoyConStickConfig(config.Stick)
 	if config.Reconnect.IntervalMs == 0 {
 		config.Reconnect.IntervalMs = defaultJoyConReconnectMs
@@ -66,7 +112,9 @@ type JoyConDeviceInfo struct {
 	ProductID          uint16 `json:"ProductId"`
 	Version            uint16 `json:"Version,omitempty"`
 	Product            string `json:"Product,omitempty"`
+	Manufacturer       string `json:"Manufacturer,omitempty"`
 	Serial             string `json:"Serial,omitempty"`
+	InspectError       string `json:"InspectError,omitempty"`
 	ControllerType     uint8  `json:"ControllerType,omitempty"`
 	UsagePage          uint16 `json:"UsagePage,omitempty"`
 	Usage              uint16 `json:"Usage,omitempty"`
@@ -80,6 +128,11 @@ func (d JoyConDeviceInfo) IsLeftJoyCon() bool {
 	return d.ControllerType == joyConTypeLeft ||
 		(d.VendorID == joyConNintendoVendorID && d.ProductID == joyConLeftProductID) ||
 		isExplicitLeftJoyConProduct(d.Product)
+}
+
+func (d JoyConDeviceInfo) IsAutoDetectedLeftJoyCon() bool {
+	return d.VendorID == joyConNintendoVendorID &&
+		(d.ProductID == joyConLeftProductID || d.ControllerType == joyConTypeLeft)
 }
 
 func (d JoyConDeviceInfo) MightBeLeftJoyCon() bool {
@@ -97,9 +150,10 @@ func (d JoyConDeviceInfo) CanOpenAsCompatibleJoyCon() bool {
 }
 
 func shouldOpenJoyConInputOnly(device JoyConDeviceInfo) bool {
-	// Zero report lengths mean HID caps were unavailable, not that the device
-	// cannot accept output. Keep known Joy-Con devices on the normal R/W path.
-	return device.InputOnly || device.ForcedCompatible ||
+	// Explicitly registered compatible devices should try the same R/W setup as
+	// BetterJoy when their report capabilities permit it. OpenJoyConHIDSession
+	// falls back to read-only if the interface rejects write access or commands.
+	return device.InputOnly ||
 		(device.OutputReportLength > 0 && device.OutputReportLength < joyConOutputReportLength) ||
 		(device.InputReportLength > 0 && device.InputReportLength <= 8)
 }
@@ -124,9 +178,25 @@ func (d JoyConDeviceInfo) StableID() string {
 func (d JoyConDeviceInfo) DisplayName() string {
 	name := strings.TrimSpace(d.Product)
 	if name == "" {
-		name = "HID game controller"
+		name = "HID interface"
 	}
 	return fmt.Sprintf("%s (VID %04x / PID %04x / ID %s)", name, d.VendorID, d.ProductID, d.StableID())
+}
+
+func parseJoyConVIDPIDFromPath(path string) (uint16, uint16) {
+	lower := strings.ToLower(path)
+	parse := func(marker string) uint16 {
+		index := strings.Index(lower, marker)
+		if index < 0 || index+len(marker)+4 > len(lower) {
+			return 0
+		}
+		value, err := strconv.ParseUint(lower[index+len(marker):index+len(marker)+4], 16, 16)
+		if err != nil {
+			return 0
+		}
+		return uint16(value)
+	}
+	return parse("vid_"), parse("pid_")
 }
 
 func fingerprintJoyConDevicePath(path string) string {
@@ -141,22 +211,49 @@ func matchesPreferredJoyConDevice(device JoyConDeviceInfo, preferred string) boo
 		strings.EqualFold(device.Fingerprint, preferred)
 }
 
-func chooseJoyConDevice(devices []JoyConDeviceInfo, preferred string) (JoyConDeviceInfo, bool) {
-	preferred = strings.TrimSpace(preferred)
-	if preferred != "" {
+func chooseJoyConDevice(devices []JoyConDeviceInfo, config JoyConProfileConfig) (JoyConDeviceInfo, bool) {
+	config = normalizeJoyConProfileConfig(config)
+	if config.CompatibleDevice.IsSet() {
+		for _, device := range devices {
+			if !config.CompatibleDevice.MatchesExact(device) {
+				continue
+			}
+			device.ForcedCompatible = true
+			device.ControllerType = joyConTypeLeft
+			return device, true
+		}
+		identityMatches := make([]JoyConDeviceInfo, 0, 1)
+		for _, device := range devices {
+			if config.CompatibleDevice.MatchesIdentity(device) {
+				identityMatches = append(identityMatches, device)
+			}
+		}
+		// A serial fallback is safe only when it resolves to one HID interface.
+		// Multiple collections often share VID/PID/serial; guessing among them can
+		// open a keyboard/vendor-control interface instead of the controller input.
+		if len(identityMatches) == 1 {
+			device := identityMatches[0]
+			device.ForcedCompatible = true
+			device.ControllerType = joyConTypeLeft
+			return device, true
+		}
+	}
+	// Backward compatibility for rc2/rc3 configs. Unlike the old implementation,
+	// an explicit legacy ID may refer to any HID interface; it is never auto-opened.
+	if preferred := strings.TrimSpace(config.PreferredDevice); preferred != "" {
 		for _, device := range devices {
 			if !matchesPreferredJoyConDevice(device, preferred) {
 				continue
 			}
-			if !device.IsGameControllerCollection() && !device.MightBeLeftJoyCon() {
-				continue
-			}
 			device.ForcedCompatible = !device.IsLeftJoyCon()
+			if device.ForcedCompatible {
+				device.ControllerType = joyConTypeLeft
+			}
 			return device, true
 		}
 	}
 	for _, device := range devices {
-		if device.IsLeftJoyCon() {
+		if device.IsAutoDetectedLeftJoyCon() {
 			return device, true
 		}
 	}

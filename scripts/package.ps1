@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "8.4.0-rc3",
+    [string]$Version = "8.4.0-rc4",
     [string]$OutputDirectory = "dist"
 )
 $ErrorActionPreference = "Stop"

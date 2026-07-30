@@ -184,12 +184,12 @@ load();pollTimer=setInterval(load,750);
 `
 
 const defaultConfigJSON = `{
-  "Version": 10,
-  "SavedBy": "8.4.0-rc3-go-default",
+  "Version": 11,
+  "SavedBy": "8.4.0-rc4-go-default",
   "SavedAt": "2026-07-05T00:00:00+09:00",
   "ActiveProfileId": "default",
   "AutoSwitch": {"Enabled": false, "DebounceMs": 350, "Bindings": []},
-  "Controller": {"Enabled": false},
+  "Controller": {"Enabled": false, "Visible": false},
   "Profiles": [
     {
       "Id": "default",

@@ -11,37 +11,59 @@ import (
 )
 
 type joyConWebState struct {
-	ControllerEnabled  bool                   `json:"controllerEnabled"`
-	ProfileIndex       int                    `json:"profileIndex"`
-	ProfileName        string                 `json:"profileName"`
-	Enabled            bool                   `json:"enabled"`
-	PreferredDevice    string                 `json:"preferredDevice"`
-	ReconnectEnabled   bool                   `json:"reconnectEnabled"`
-	ReconnectMs        int                    `json:"reconnectMs"`
-	Stick              JoyConStickConfig      `json:"stick"`
-	Status             JoyConConnectionStatus `json:"status"`
-	StatusText         string                 `json:"statusText"`
-	XInputStatus       XInputConnectionStatus `json:"xInputStatus"`
-	XInputStatusText   string                 `json:"xInputStatusText"`
-	LastInputText      string                 `json:"lastInputText"`
-	LastControllerKind string                 `json:"lastControllerKind"`
-	LastControllerCode string                 `json:"lastControllerCode"`
-	LastControllerText string                 `json:"lastControllerText"`
-	CalibrationActive  bool                   `json:"calibrationActive"`
-	CalibrationText    string                 `json:"calibrationText"`
+	ControllerEnabled  bool                     `json:"controllerEnabled"`
+	ProfileIndex       int                      `json:"profileIndex"`
+	ProfileName        string                   `json:"profileName"`
+	Enabled            bool                     `json:"enabled"`
+	PreferredDevice    string                   `json:"preferredDevice"`
+	CompatibleDevice   JoyConManualDeviceConfig `json:"compatibleDevice"`
+	CompatibleDeviceID string                   `json:"compatibleDeviceId"`
+	ReconnectEnabled   bool                     `json:"reconnectEnabled"`
+	ReconnectMs        int                      `json:"reconnectMs"`
+	Stick              JoyConStickConfig        `json:"stick"`
+	Status             JoyConConnectionStatus   `json:"status"`
+	StatusText         string                   `json:"statusText"`
+	XInputStatus       XInputConnectionStatus   `json:"xInputStatus"`
+	XInputStatusText   string                   `json:"xInputStatusText"`
+	LastInputText      string                   `json:"lastInputText"`
+	LastControllerKind string                   `json:"lastControllerKind"`
+	LastControllerCode string                   `json:"lastControllerCode"`
+	LastControllerText string                   `json:"lastControllerText"`
+	CalibrationActive  bool                     `json:"calibrationActive"`
+	CalibrationText    string                   `json:"calibrationText"`
 }
 
 type joyConWebRequest struct {
-	Op               string  `json:"op"`
-	Enabled          bool    `json:"enabled"`
-	PreferredDevice  string  `json:"preferredDevice"`
-	ReconnectEnabled bool    `json:"reconnectEnabled"`
-	ReconnectMs      int     `json:"reconnectMs"`
-	DeadZone         float64 `json:"deadZone"`
-	ReleaseZone      float64 `json:"releaseZone"`
-	DirectionMode    string  `json:"directionMode"`
-	InvertX          bool    `json:"invertX"`
-	InvertY          bool    `json:"invertY"`
+	Op                 string  `json:"op"`
+	Enabled            bool    `json:"enabled"`
+	PreferredDevice    string  `json:"preferredDevice"`
+	CompatibleDeviceID string  `json:"compatibleDeviceId"`
+	ReconnectEnabled   bool    `json:"reconnectEnabled"`
+	ReconnectMs        int     `json:"reconnectMs"`
+	DeadZone           float64 `json:"deadZone"`
+	ReleaseZone        float64 `json:"releaseZone"`
+	DirectionMode      string  `json:"directionMode"`
+	InvertX            bool    `json:"invertX"`
+	InvertY            bool    `json:"invertY"`
+}
+
+func compatibleDeviceSelectionID(config JoyConManualDeviceConfig) string {
+	config = normalizeJoyConManualDeviceConfig(config)
+	if config.Fingerprint == "" {
+		return ""
+	}
+	return "path:" + config.Fingerprint
+}
+
+func findJoyConCandidateBySelectionID(candidates []JoyConDeviceInfo, selection string) (JoyConDeviceInfo, bool) {
+	selection = strings.TrimSpace(selection)
+	for _, candidate := range candidates {
+		id := "path:" + strings.ToLower(strings.TrimSpace(candidate.Fingerprint))
+		if candidate.Fingerprint != "" && strings.EqualFold(id, selection) {
+			return candidate, true
+		}
+	}
+	return JoyConDeviceInfo{}, false
 }
 
 func (a *App) buildJoyConWebState() joyConWebState {
@@ -78,6 +100,8 @@ func (a *App) buildJoyConWebState() joyConWebState {
 		ProfileName:        profileName,
 		Enabled:            config.Enabled,
 		PreferredDevice:    config.PreferredDevice,
+		CompatibleDevice:   config.CompatibleDevice,
+		CompatibleDeviceID: compatibleDeviceSelectionID(config.CompatibleDevice),
 		ReconnectEnabled:   config.Reconnect.Enabled,
 		ReconnectMs:        config.Reconnect.IntervalMs,
 		Stick:              config.Stick,
@@ -120,8 +144,11 @@ func (a *App) webAPIJoyCon(w http.ResponseWriter, r *http.Request) {
 	var err error
 	switch strings.TrimSpace(req.Op) {
 	case "rescan":
-		a.requestJoyConRescan()
-		message = "Joy-Conを再検索しています。"
+		err = a.scanJoyConCandidates()
+		if err == nil {
+			a.requestJoyConRescan()
+			message = "HID一覧を更新し、登録済みJoy-Conを再接続しています。"
+		}
 	case "save-stick":
 		err = a.saveJoyConWebSettings(req)
 		message = "Joy-Con接続・スティック設定を保存しました。"
@@ -144,6 +171,18 @@ func (a *App) webAPIJoyCon(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"ok": true, "message": message, "joyCon": a.buildJoyConWebState()})
 }
 
+func (a *App) scanJoyConCandidates() error {
+	candidates, err := EnumerateJoyConHIDDevices()
+	if err != nil {
+		return fmt.Errorf("HID一覧を取得できません: %w", err)
+	}
+	a.mu.Lock()
+	a.joyConStatus.Candidates = append([]JoyConDeviceInfo(nil), candidates...)
+	a.postUIRefreshLocked()
+	a.mu.Unlock()
+	return nil
+}
+
 func (a *App) saveJoyConWebSettings(req joyConWebRequest) error {
 	if math.IsNaN(req.DeadZone) || math.IsInf(req.DeadZone, 0) || req.DeadZone < 0.05 || req.DeadZone > 0.90 {
 		return fmt.Errorf("デッドゾーンは0.05〜0.90で指定してください。")
@@ -163,6 +202,20 @@ func (a *App) saveJoyConWebSettings(req joyConWebRequest) error {
 	current := normalizeJoyConProfileConfig(a.config.Profiles[a.editorProfileIndex].JoyCon)
 	current.Enabled = req.Enabled
 	current.PreferredDevice = strings.TrimSpace(req.PreferredDevice)
+	selection := strings.TrimSpace(req.CompatibleDeviceID)
+	if selection == "" {
+		current.CompatibleDevice = JoyConManualDeviceConfig{}
+	} else if strings.EqualFold(selection, compatibleDeviceSelectionID(current.CompatibleDevice)) {
+		// Keep a saved registration while the device is disconnected so unrelated
+		// stick/reconnect settings can still be edited.
+	} else {
+		candidate, ok := findJoyConCandidateBySelectionID(a.joyConStatus.Candidates, selection)
+		if !ok {
+			return fmt.Errorf("選択したHIDインターフェースが現在の候補一覧にありません。HID一覧を更新して選び直してください。")
+		}
+		current.CompatibleDevice = manualJoyConDeviceConfig(candidate)
+		current.PreferredDevice = ""
+	}
 	current.Reconnect.Enabled = req.ReconnectEnabled
 	current.Reconnect.IntervalMs = req.ReconnectMs
 	current.Stick.DeadZone = req.DeadZone

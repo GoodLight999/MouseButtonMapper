@@ -137,7 +137,7 @@ func (w *JoyConWorker) Run(ctx context.Context) error {
 			continue
 		}
 
-		device, candidates, err := w.findDevice(config.PreferredDevice)
+		device, candidates, err := w.findDevice(config)
 		if err != nil {
 			w.completeRescanAttempt()
 			w.publishCandidates(candidates)
@@ -200,21 +200,21 @@ func (w *JoyConWorker) waitAfterFailure(ctx context.Context, config JoyConProfil
 	return w.waitForRetry(ctx, config.Reconnect.IntervalMs)
 }
 
-func (w *JoyConWorker) findDevice(preferred string) (JoyConDeviceInfo, []JoyConDeviceInfo, error) {
+func (w *JoyConWorker) findDevice(config JoyConProfileConfig) (JoyConDeviceInfo, []JoyConDeviceInfo, error) {
 	devices, err := w.backend.Enumerate()
 	if err != nil {
 		return JoyConDeviceInfo{}, nil, fmt.Errorf("enumerate Joy-Con HID devices: %w", err)
 	}
-	device, ok := chooseJoyConDevice(devices, preferred)
+	device, ok := chooseJoyConDevice(devices, config)
 	if !ok {
 		if len(devices) == 0 {
-			return JoyConDeviceInfo{}, devices, errors.New("Joy-Con (L) or compatible HID gamepad is not connected")
+			return JoyConDeviceInfo{}, devices, errors.New("HID interface was not found")
 		}
 		names := make([]string, 0, len(devices))
 		for _, candidate := range devices {
 			names = append(names, candidate.DisplayName())
 		}
-		return JoyConDeviceInfo{}, devices, fmt.Errorf("Joy-Con (L) was not identified automatically; select a compatible candidate: %s", strings.Join(names, "; "))
+		return JoyConDeviceInfo{}, devices, fmt.Errorf("Joy-Con (L) was not identified automatically; register one HID interface explicitly as a left Joy-Con: %s", strings.Join(names, "; "))
 	}
 	return device, devices, nil
 }

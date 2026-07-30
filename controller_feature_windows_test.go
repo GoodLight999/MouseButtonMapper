@@ -14,19 +14,19 @@ func TestControllerFeatureDefaultsOffAndMigratesConfigVersion(t *testing.T) {
 		ActiveProfileId: "profile",
 		Profiles:        []Profile{{Id: "profile", Name: "Profile"}},
 	})
-	if cfg.Version != 10 {
-		t.Fatalf("version=%d want 10", cfg.Version)
+	if cfg.Version != 11 {
+		t.Fatalf("version=%d want 11", cfg.Version)
 	}
-	if cfg.Controller.Enabled {
-		t.Fatal("controller feature must remain opt-in for configs without Controller.Enabled")
+	if cfg.Controller.Enabled || cfg.Controller.Visible {
+		t.Fatal("controller feature and its UI must remain hidden opt-in for legacy configs")
 	}
 
 	var defaultCfg Config
 	if err := json.Unmarshal([]byte(defaultConfigJSON), &defaultCfg); err != nil {
 		t.Fatalf("default config: %v", err)
 	}
-	if defaultCfg.Controller.Enabled {
-		t.Fatal("embedded default enables experimental controller feature")
+	if defaultCfg.Controller.Enabled || defaultCfg.Controller.Visible {
+		t.Fatal("embedded default exposes or enables experimental controller feature")
 	}
 }
 
@@ -36,7 +36,7 @@ func TestDisabledControllerFeatureExcludesOnlyControllerRules(t *testing.T) {
 	xInputRule := Rule{Enabled: true, Input: []Item{{Kind: "XInput", Code: "P1:LB"}}, Mode: "Tap", Output: []Item{{Kind: "Key", Code: "C"}}}
 	app := &App{
 		config: Config{
-			Version:         10,
+			Version:         11,
 			ActiveProfileId: "profile",
 			Profiles:        []Profile{{Id: "profile", Name: "Profile", Rules: []Rule{mouseRule, joyRule, xInputRule}}},
 		},
@@ -89,12 +89,15 @@ func TestDisabledControllerFeatureDoesNotStartWorkers(t *testing.T) {
 	}
 }
 
-func TestControllerFeatureUIExplainsFullDisableAndFallback(t *testing.T) {
+func TestControllerFeatureUIProvidesTrueHideAndBetterJoyStyleRegistration(t *testing.T) {
 	for _, text := range []string{
 		"controllerFeatureEnabled",
+		"controllerHideUI",
+		"experimentalFeatureRestore",
+		"hide-ui",
 		"BetterJoy",
-		"JoyToKey",
-		"HID列挙・XInput監視・コントローラールール実行を停止",
+		"全HIDインターフェース",
+		"機能を停止して設定画面から隠す",
 	} {
 		if !strings.Contains(joyConUIJS, text) {
 			t.Fatalf("controller feature UI missing %q", text)
@@ -109,7 +112,7 @@ func TestDisablingControllerFeaturePreservesStoredRulesAndMouseLongPress(t *test
 	controllerTrigger := Item{Kind: "XInput", Code: "P1:A"}
 	app := &App{
 		config: Config{
-			Version:         10,
+			Version:         11,
 			ActiveProfileId: "profile",
 			Controller:      ControllerFeatureConfig{Enabled: false},
 			Profiles:        []Profile{{Id: "profile", Name: "Profile", Rules: []Rule{mouseRule, controllerRule}}},
@@ -148,5 +151,16 @@ func TestXInputLongPressUsesStableControllerKey(t *testing.T) {
 	}
 	if !isHoldableLongPressTrigger(trigger) {
 		t.Fatal("known XInput button is not accepted as a long-press trigger")
+	}
+}
+
+func TestControllerVisibilityMigrationPreservesEnabledOnly(t *testing.T) {
+	disabled := normalizeConfig(Config{Version: 10, ActiveProfileId: "p", Profiles: []Profile{{Id: "p", Name: "P"}}})
+	if disabled.Controller.Enabled || disabled.Controller.Visible {
+		t.Fatalf("disabled v10 migration=%+v", disabled.Controller)
+	}
+	enabled := normalizeConfig(Config{Version: 10, ActiveProfileId: "p", Controller: ControllerFeatureConfig{Enabled: true}, Profiles: []Profile{{Id: "p", Name: "P"}}})
+	if !enabled.Controller.Enabled || !enabled.Controller.Visible {
+		t.Fatalf("enabled v10 migration=%+v", enabled.Controller)
 	}
 }

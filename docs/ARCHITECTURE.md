@@ -83,10 +83,11 @@ runtime state keyにはKindを含め、source間のcollisionを防ぎます。
 
 ## Raw HID safety
 
-- Generic Desktop Usage PageのGame Pad／Joystickだけをcandidateにする
+- BetterJoyの3rd-party登録方式を参考に、Windowsが公開する全HID interfaceを列挙する
 - 純正Joy-Conは既知VID/PIDでauto detect可能
-- 未知VID/PIDはStable IDの明示選択が必要
-- output capability不明のdeviceへ無差別にsubcommandを送らない
+- unknown HIDは自動Openせず、UIで正確なpath fingerprintを明示登録したinterfaceだけを左Joy-Con互換として扱う
+- 登録はVID/PID/serial/fingerprintを保持し、exact pathを優先してserialを再接続fallbackにする
+- 明示登録済みdeviceだけR/W OpenとNintendo report-mode commandを試し、拒否時はread-onlyへ縮退する
 - unsupported reportを別形式として推測せず、lengthとbounded hexを診断する
 - closeとwriteをmutexで直列化し、blocking readは`CancelIoEx`で解除する
 
@@ -116,7 +117,7 @@ runtime state keyにはKindを含め、source間のcollisionを防ぎます。
 
 ## Config compatibility
 
-`Config.Version`は10です。`Controller.Enabled`の欠落はfalseとして扱います。新fieldは原則optionalとし、旧profile/rule/auto-switchを保存時に失わないようにします。
+`Config.Version`は11です。`Controller.Visible`と`Controller.Enabled`の欠落はfalseとして扱います。Visible=falseでは専用UIを生成せず、Enabled=falseではworkerを起動しません。新fieldは原則optionalとし、旧profile/rule/auto-switchを保存時に失わないようにします。
 
 ## Security boundary
 

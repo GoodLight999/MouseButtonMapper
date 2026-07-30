@@ -1,5 +1,19 @@
 # Changelog
 
+## 8.4.0-rc4
+
+- BetterJoyの実コードを確認し、互換品検出を`全HID列挙 + 明示的な3rd-party登録`方式へ変更
+- Generic Desktop Gamepad/Joystick Usage filterを撤去し、vendor-specific collectionの互換Joy-Conも候補表示
+- 自由入力の「互換HID識別子」を廃止し、現在列挙された正確なHID interface fingerprintからだけ登録可能に変更
+- VID/PID/serial/fingerprint/productをプロファイルへ保存し、exact interface優先・serial fallbackで再接続
+- metadataを開けないHID interfaceも、path fingerprintとpath由来VID/PID、inspect error付きで一覧へ残す
+- 明示登録した互換品は書込み可能ならNintendo report-mode初期化を試し、Open/Write拒否時だけread-onlyへfallback
+- `Controller.Visible`を追加し、専用controller sectionとHold UIを設定画面から完全に除去可能に変更
+- `機能を停止して設定画面から隠す`でVisible/Enabledを同時にOFFにし、workerと保持出力を安全停止
+- 非表示時は一般管理欄の小さな`実験機能を表示`だけを残し、controller名称・詳細を通常画面から排除
+- 全HID候補の誤選択警告、Steam完全終了手順、製品名・VID/PID・serial・Usage・report長表示を追加
+- Config.Versionを11へ更新
+
 ## 8.4.0-rc3
 
 - Joy-Con／Switch互換Raw HID／XInputを一括して停止・非表示にする全体オプトイン設定を追加

@@ -5,6 +5,8 @@ package main
 import (
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -30,13 +32,14 @@ var (
 	joyConSetupAPIDLL = syscall.NewLazyDLL("setupapi.dll")
 	joyConKernel32DLL = syscall.NewLazyDLL("kernel32.dll")
 
-	joyConHidDGetHidGuid        = joyConHIDDLL.NewProc("HidD_GetHidGuid")
-	joyConHidDGetAttributes     = joyConHIDDLL.NewProc("HidD_GetAttributes")
-	joyConHidDGetProductString  = joyConHIDDLL.NewProc("HidD_GetProductString")
-	joyConHidDGetSerialString   = joyConHIDDLL.NewProc("HidD_GetSerialNumberString")
-	joyConHidDGetPreparsedData  = joyConHIDDLL.NewProc("HidD_GetPreparsedData")
-	joyConHidDFreePreparsedData = joyConHIDDLL.NewProc("HidD_FreePreparsedData")
-	joyConHidPGetCaps           = joyConHIDDLL.NewProc("HidP_GetCaps")
+	joyConHidDGetHidGuid            = joyConHIDDLL.NewProc("HidD_GetHidGuid")
+	joyConHidDGetAttributes         = joyConHIDDLL.NewProc("HidD_GetAttributes")
+	joyConHidDGetProductString      = joyConHIDDLL.NewProc("HidD_GetProductString")
+	joyConHidDGetManufacturerString = joyConHIDDLL.NewProc("HidD_GetManufacturerString")
+	joyConHidDGetSerialString       = joyConHIDDLL.NewProc("HidD_GetSerialNumberString")
+	joyConHidDGetPreparsedData      = joyConHIDDLL.NewProc("HidD_GetPreparsedData")
+	joyConHidDFreePreparsedData     = joyConHIDDLL.NewProc("HidD_FreePreparsedData")
+	joyConHidPGetCaps               = joyConHIDDLL.NewProc("HidP_GetCaps")
 
 	joyConSetupDiGetClassDevs             = joyConSetupAPIDLL.NewProc("SetupDiGetClassDevsW")
 	joyConSetupDiEnumDeviceInterfaces     = joyConSetupAPIDLL.NewProc("SetupDiEnumDeviceInterfaces")
@@ -123,15 +126,18 @@ func EnumerateJoyConHIDDevices() ([]JoyConDeviceInfo, error) {
 		if err != nil {
 			continue
 		}
-		info, err := inspectJoyConHIDPath(path)
-		if err != nil {
-			continue
-		}
-		// Keep only top-level joystick/gamepad collections plus explicit Nintendo
-		// identities. This exposes compatible clones for manual selection without
-		// ever probing keyboards, mice, consumer controls, or vendor-only HID nodes.
-		if !info.IsGameControllerCollection() && !info.MightBeLeftJoyCon() {
-			continue
+		info, inspectErr := inspectJoyConHIDPath(path)
+		if inspectErr != nil {
+			// BetterJoy enumerates every HID interface and lets the user explicitly
+			// register the desired one. Preserve even interfaces whose metadata cannot
+			// be opened (for example while another process owns the device) so their
+			// exact path can still be selected after that process is closed.
+			vid, pid := parseJoyConVIDPIDFromPath(path)
+			info = JoyConDeviceInfo{
+				Path: path, Fingerprint: fingerprintJoyConDevicePath(path),
+				VendorID: vid, ProductID: pid, Product: "HID interface (details unavailable)",
+				InspectError: inspectErr.Error(),
+			}
 		}
 		if !info.IsLeftJoyCon() && info.VendorID == joyConNintendoVendorID && info.ProductID == joyConProProductID {
 			if controllerType, probeErr := probeJoyConControllerType(path); probeErr == nil && controllerType == joyConTypeLeft {
@@ -140,6 +146,17 @@ func EnumerateJoyConHIDDevices() ([]JoyConDeviceInfo, error) {
 		}
 		devices = append(devices, info)
 	}
+	sort.SliceStable(devices, func(i, j int) bool {
+		leftI, leftJ := devices[i].MightBeLeftJoyCon(), devices[j].MightBeLeftJoyCon()
+		if leftI != leftJ {
+			return leftI
+		}
+		gameI, gameJ := devices[i].IsGameControllerCollection(), devices[j].IsGameControllerCollection()
+		if gameI != gameJ {
+			return gameI
+		}
+		return strings.ToLower(devices[i].DisplayName()) < strings.ToLower(devices[j].DisplayName())
+	})
 	return devices, nil
 }
 
@@ -198,13 +215,14 @@ func inspectJoyConHIDPath(path string) (JoyConDeviceInfo, error) {
 	}
 
 	info := JoyConDeviceInfo{
-		Path:        path,
-		Fingerprint: fingerprintJoyConDevicePath(path),
-		VendorID:    attributes.VendorID,
-		ProductID:   attributes.ProductID,
-		Version:     attributes.VersionNumber,
-		Product:     joyConHIDString(joyConHidDGetProductString, handle),
-		Serial:      joyConHIDString(joyConHidDGetSerialString, handle),
+		Path:         path,
+		Fingerprint:  fingerprintJoyConDevicePath(path),
+		VendorID:     attributes.VendorID,
+		ProductID:    attributes.ProductID,
+		Version:      attributes.VersionNumber,
+		Product:      joyConHIDString(joyConHidDGetProductString, handle),
+		Manufacturer: joyConHIDString(joyConHidDGetManufacturerString, handle),
+		Serial:       joyConHIDString(joyConHidDGetSerialString, handle),
 	}
 	if caps, capsErr := joyConHIDCaps(handle); capsErr == nil {
 		info.UsagePage = caps.UsagePage
