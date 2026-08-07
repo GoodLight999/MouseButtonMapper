@@ -2,5 +2,5 @@ package main
 
 const (
 	appName    = "MouseButtonMapper"
-	appVersion = "8.4.0-rc4"
+	appVersion = "8.4.0-rc5"
 )

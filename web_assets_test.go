@@ -54,3 +54,15 @@ func TestWebUIDoesNotContainDuplicateIDs(t *testing.T) {
 		seen[id] = true
 	}
 }
+
+func TestWebUIExposesMouseOutputShortcuts(t *testing.T) {
+	for _, token := range []string{"左クリック", "右クリック", "中クリック", "サイド1", "サイド2", "ホイール上", "ホイール下"} {
+		needle := `data-output-token="` + token + `"`
+		if count := strings.Count(webHTML, needle); count != 2 {
+			t.Fatalf("output shortcut %q occurs %d times, want 2 (short/long output)", token, count)
+		}
+	}
+	if !strings.Contains(webHTML, "マウス・キーボードの割り当て") {
+		t.Fatal("core rule section must remain mouse/keyboard-first")
+	}
+}

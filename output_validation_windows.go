@@ -15,7 +15,7 @@ func validateExecutableOutputItems(items []Item) error {
 				return fmt.Errorf("不明なキーです: %s", item.Code)
 			}
 		case strings.EqualFold(item.Kind, "Mouse"):
-			if _, ok := joyConMouseTapInputs(item.Code); !ok {
+			if _, ok := mouseTapInputs(item.Code); !ok {
 				return fmt.Errorf("不明なマウス操作です: %s", item.Code)
 			}
 		case strings.EqualFold(item.Kind, "JoyCon"):

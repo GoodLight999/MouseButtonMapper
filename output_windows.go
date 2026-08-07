@@ -13,20 +13,20 @@ const (
 	joyConRuleModeHoldDown = "JoyConHoldDown"
 	joyConRuleModeHoldUp   = "JoyConHoldUp"
 
-	joyConMouseEventMove       = 0x0001
-	joyConMouseEventLeftDown   = 0x0002
-	joyConMouseEventLeftUp     = 0x0004
-	joyConMouseEventRightDown  = 0x0008
-	joyConMouseEventRightUp    = 0x0010
-	joyConMouseEventMiddleDown = 0x0020
-	joyConMouseEventMiddleUp   = 0x0040
-	joyConMouseEventWheel      = 0x0800
-	joyConMouseEventXDown      = 0x0080
-	joyConMouseEventXUp        = 0x0100
-	joyConWheelDelta           = 120
+	mouseEventMove       = 0x0001
+	mouseEventLeftDown   = 0x0002
+	mouseEventLeftUp     = 0x0004
+	mouseEventRightDown  = 0x0008
+	mouseEventRightUp    = 0x0010
+	mouseEventMiddleDown = 0x0020
+	mouseEventMiddleUp   = 0x0040
+	mouseEventWheel      = 0x0800
+	mouseEventXDown      = 0x0080
+	mouseEventXUp        = 0x0100
+	wheelDelta           = 120
 )
 
-type joyConMouseInput struct {
+type mouseInput struct {
 	Dx          int32
 	Dy          int32
 	MouseData   uint32
@@ -87,18 +87,18 @@ func joyConHoldPhaseRule(rule Rule, down bool) Rule {
 	return phase
 }
 
-func (a *App) sendJoyConRuleOutput(rule Rule) {
+func (a *App) sendRuleOutput(rule Rule) {
 	switch rule.Mode {
 	case joyConRuleModeHoldDown:
 		a.sendJoyConHeldKeys(rule.Output, true)
 	case joyConRuleModeHoldUp:
 		a.sendJoyConHeldKeys(rule.Output, false)
 	default:
-		a.sendJoyConTapOutput(rule.Output)
+		a.sendTapOutput(rule.Output)
 	}
 }
 
-func (a *App) sendJoyConTapOutput(items []Item) {
+func (a *App) sendTapOutput(items []Item) {
 	keys := make([]uint32, 0, len(items))
 	mouseActions := make([]INPUT, 0, len(items)*2)
 	unsupported := make([]string, 0)
@@ -121,7 +121,7 @@ func (a *App) sendJoyConTapOutput(items []Item) {
 			continue
 		}
 		if strings.EqualFold(item.Kind, "Mouse") {
-			mouseInputs, ok := joyConMouseTapInputs(item.Code)
+			mouseInputs, ok := mouseTapInputs(item.Code)
 			if !ok {
 				unsupported = append(unsupported, item.Kind+":"+item.Code)
 				continue
@@ -246,39 +246,39 @@ func (a *App) physicalKeyDown(vk uint32) bool {
 	return a.keyDown[vk] || a.keyDown[genericVK(vk)]
 }
 
-func joyConWheelData(delta int32) uint32 {
+func wheelData(delta int32) uint32 {
 	return uint32(delta)
 }
 
-func joyConMouseTapInputs(code string) ([]INPUT, bool) {
+func mouseTapInputs(code string) ([]INPUT, bool) {
 	switch normMouse(code) {
 	case "Left":
-		return []INPUT{makeJoyConMouseInput(0, joyConMouseEventLeftDown), makeJoyConMouseInput(0, joyConMouseEventLeftUp)}, true
+		return []INPUT{makeMouseInput(0, mouseEventLeftDown), makeMouseInput(0, mouseEventLeftUp)}, true
 	case "Right":
-		return []INPUT{makeJoyConMouseInput(0, joyConMouseEventRightDown), makeJoyConMouseInput(0, joyConMouseEventRightUp)}, true
+		return []INPUT{makeMouseInput(0, mouseEventRightDown), makeMouseInput(0, mouseEventRightUp)}, true
 	case "Middle":
-		return []INPUT{makeJoyConMouseInput(0, joyConMouseEventMiddleDown), makeJoyConMouseInput(0, joyConMouseEventMiddleUp)}, true
+		return []INPUT{makeMouseInput(0, mouseEventMiddleDown), makeMouseInput(0, mouseEventMiddleUp)}, true
 	case "X1":
-		return []INPUT{makeJoyConMouseInput(1, joyConMouseEventXDown), makeJoyConMouseInput(1, joyConMouseEventXUp)}, true
+		return []INPUT{makeMouseInput(1, mouseEventXDown), makeMouseInput(1, mouseEventXUp)}, true
 	case "X2":
-		return []INPUT{makeJoyConMouseInput(2, joyConMouseEventXDown), makeJoyConMouseInput(2, joyConMouseEventXUp)}, true
+		return []INPUT{makeMouseInput(2, mouseEventXDown), makeMouseInput(2, mouseEventXUp)}, true
 	case "WheelUp":
-		return []INPUT{makeJoyConMouseInput(joyConWheelData(joyConWheelDelta), joyConMouseEventWheel)}, true
+		return []INPUT{makeMouseInput(wheelData(wheelDelta), mouseEventWheel)}, true
 	case "WheelDown":
-		return []INPUT{makeJoyConMouseInput(joyConWheelData(-joyConWheelDelta), joyConMouseEventWheel)}, true
+		return []INPUT{makeMouseInput(wheelData(-wheelDelta), mouseEventWheel)}, true
 	default:
 		return nil, false
 	}
 }
 
-func makeJoyConMouseInput(data uint32, flags uint32) INPUT {
+func makeMouseInput(data uint32, flags uint32) INPUT {
 	var input INPUT
 	input.Type = INPUT_MOUSE
-	mouse := joyConMouseInput{
+	mouse := mouseInput{
 		MouseData:   data,
 		DwFlags:     flags,
 		DwExtraInfo: extraInfoMarker,
 	}
-	*(*joyConMouseInput)(unsafe.Pointer(&input.Data[0])) = mouse
+	*(*mouseInput)(unsafe.Pointer(&input.Data[0])) = mouse
 	return input
 }

@@ -14,10 +14,12 @@ actionCh
         ▼
 outputWorker
         ▼
+output_windows.go
+        ▼
 SendInput(extraInfoMarker)
 ```
 
-フックcallbackを短く保つことが最優先です。
+フックcallbackを短く保つことが最優先です。`output_windows.go`はcontroller subsystemから独立した中核で、KeyとMouse（Left/Right/Middle/X1/X2/WheelUp/WheelDown）を同じrule outputとして処理します。
 
 ## Runtime workers
 

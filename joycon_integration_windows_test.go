@@ -167,26 +167,26 @@ func TestValidateExecutableOutputItems(t *testing.T) {
 	}
 }
 
-func TestJoyConMouseOutputEncoding(t *testing.T) {
-	inputs, ok := joyConMouseTapInputs("WheelDown")
+func TestMouseOutputEncoding(t *testing.T) {
+	inputs, ok := mouseTapInputs("WheelDown")
 	if !ok || len(inputs) != 1 || inputs[0].Type != INPUT_MOUSE {
 		t.Fatalf("WheelDown inputs=%#v ok=%v", inputs, ok)
 	}
-	mouse := *(*joyConMouseInput)(unsafe.Pointer(&inputs[0].Data[0]))
-	if mouse.DwFlags != joyConMouseEventWheel || mouse.MouseData != joyConWheelData(-joyConWheelDelta) {
+	mouse := *(*mouseInput)(unsafe.Pointer(&inputs[0].Data[0]))
+	if mouse.DwFlags != mouseEventWheel || mouse.MouseData != wheelData(-wheelDelta) {
 		t.Fatalf("wheel input=%+v", mouse)
 	}
 	if mouse.DwExtraInfo != extraInfoMarker {
 		t.Fatalf("extraInfo=%x", mouse.DwExtraInfo)
 	}
 
-	inputs, ok = joyConMouseTapInputs("X1")
+	inputs, ok = mouseTapInputs("X1")
 	if !ok || len(inputs) != 2 {
 		t.Fatalf("X1 inputs=%#v ok=%v", inputs, ok)
 	}
-	down := *(*joyConMouseInput)(unsafe.Pointer(&inputs[0].Data[0]))
-	up := *(*joyConMouseInput)(unsafe.Pointer(&inputs[1].Data[0]))
-	if down.DwFlags != joyConMouseEventXDown || up.DwFlags != joyConMouseEventXUp || down.MouseData != 1 || up.MouseData != 1 {
+	down := *(*mouseInput)(unsafe.Pointer(&inputs[0].Data[0]))
+	up := *(*mouseInput)(unsafe.Pointer(&inputs[1].Data[0]))
+	if down.DwFlags != mouseEventXDown || up.DwFlags != mouseEventXUp || down.MouseData != 1 || up.MouseData != 1 {
 		t.Fatalf("X1 down/up=%+v/%+v", down, up)
 	}
 }

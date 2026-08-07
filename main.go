@@ -2418,6 +2418,16 @@ func (a *App) recordMouseDownLocked(btn string) {
 	it := Item{Kind: "Mouse", Code: btn}
 	a.noteLastInputLocked(it, "押下")
 	if isOutputRecordingMode(a.recordingMode) {
+		// Primary clicks must remain available to operate the settings UI while
+		// recording. X1/X2 are safe to capture directly as executable outputs.
+		if isPrimaryButton(btn) {
+			return
+		}
+		if a.recordHeld == nil {
+			a.recordHeld = map[string]bool{}
+		}
+		a.appendRecordedItemLocked(it)
+		a.recordHeld[recordItemKey(it)] = true
 		return
 	}
 	if a.recordHeld == nil {
@@ -2483,7 +2493,9 @@ func (a *App) recordUpLocked(it Item, phase string) bool {
 	// この関数は a.mu を保持した状態で呼ぶ。
 	a.noteLastInputLocked(it, phase)
 	if isOutputRecordingMode(a.recordingMode) && !strings.EqualFold(it.Kind, "Key") {
-		return false
+		if !strings.EqualFold(it.Kind, "Mouse") || isPrimaryButton(normMouse(it.Code)) {
+			return false
+		}
 	}
 	if a.recordHeld != nil {
 		delete(a.recordHeld, recordItemKey(it))
@@ -2493,10 +2505,12 @@ func (a *App) recordUpLocked(it Item, phase string) bool {
 
 func (a *App) recordWheelLocked(it Item, phase string) bool {
 	// ホイールは「押下状態」を持たないため、単体なら即完了。
-	// サイドボタン等を押しながら回した場合は、そのボタンを離した時点で完了。
+	// 入力記録ではサイドボタン等のprefixも含める。出力記録では
+	// WheelUp/WheelDown自体をそのまま実行内容として登録する。
 	a.noteLastInputLocked(it, phase)
 	if isOutputRecordingMode(a.recordingMode) {
-		return false
+		a.appendRecordedItemLocked(it)
+		return len(a.recordedItems) > 0 && len(a.recordHeld) == 0
 	}
 	a.appendHeldMousePrefixesLocked()
 	a.appendRecordedItemLocked(it)
@@ -2671,7 +2685,7 @@ func parseVK(code string) (uint32, bool) {
 }
 
 func (a *App) sendRule(r Rule) {
-	a.sendJoyConRuleOutput(r)
+	a.sendRuleOutput(r)
 }
 func isModifier(vk uint32) bool {
 	switch genericVK(vk) {
@@ -3996,9 +4010,13 @@ func (a *App) saveSelectedRuleFromEditor() {
 		messageBox("入力の解釈に失敗", err.Error())
 		return
 	}
-	output, err := parseItemsText(getText(a.editOutput), false, true)
+	output, err := parseItemsText(getText(a.editOutput), true, true)
 	if err != nil {
 		messageBox("出力の解釈に失敗", err.Error())
+		return
+	}
+	if err := validateExecutableOutputItems(output); err != nil {
+		messageBox("出力の内容が不正", err.Error())
 		return
 	}
 	if len(input) == 0 || len(output) == 0 {
@@ -4260,20 +4278,20 @@ func (a *App) moveSelectedRule(delta int) {
 	}
 }
 func (a *App) testOutputFromEditor() {
-	output, err := parseItemsText(getText(a.editOutput), false, true)
+	output, err := parseItemsText(getText(a.editOutput), true, true)
 	if err != nil {
 		messageBox("出力の解釈に失敗", err.Error())
 		return
 	}
-	keys := []uint32{}
-	for _, it := range output {
-		if vk, ok := parseVK(it.Code); ok {
-			keys = append(keys, vk)
-		}
+	if len(output) == 0 {
+		messageBox("MouseButtonMapper", "テストする実行内容を入力してください。")
+		return
 	}
-	if len(keys) > 0 {
-		a.sendShortcut(keys)
+	if err := validateExecutableOutputItems(output); err != nil {
+		messageBox("出力の内容が不正", err.Error())
+		return
 	}
+	a.enqueueRuleGuaranteed(Rule{Enabled: true, Mode: "Tap", Output: output})
 }
 
 func parseItemsText(text string, allowMouse bool, allowKey bool) ([]Item, error) {

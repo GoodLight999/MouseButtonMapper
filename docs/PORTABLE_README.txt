@@ -1,4 +1,4 @@
-MouseButtonMapper 8.4.0-rc4 portable
+MouseButtonMapper 8.4.0-rc5 portable
 
 1. MouseButtonMapper.exe を任意のフォルダーから起動してください。
 2. 設定は %LOCALAPPDATA%\MouseButtonMapper\config.json に保存されます。

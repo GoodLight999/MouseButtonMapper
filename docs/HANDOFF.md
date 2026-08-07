@@ -8,7 +8,7 @@
 - 安定版: `main` / `8.3.0`
 - 開発branch: `feature/joycon-l`
 - Draft PR: `#5`
-- 現在のRC: `8.4.0-rc4`
+- 現在のRC: `8.4.0-rc5`
 - branch起点: `3126d531cff93c519bdf3634847d553033787940`
 - 最終head、全緑CI run、artifact ID、SHA-256: PR #5本文を正本とする
 
@@ -17,6 +17,18 @@ PRは実機確認完了までDraft・未マージを維持する。過去チャ�
 ## 2. 製品方針
 
 MouseButtonMapperの中核は、安定したマウス／キーボード割り当てです。ゲームコントローラー対応は任意の実験機能であり、中核機能を巻き込んで失敗させてはいけません。
+
+製品ポジションは「GUI-firstの小さなAHK系リマッパー」です。AutoHotkeyのスクリプト言語や巨大な自動化機能を再実装することは目的にしません。代わりに、マウス／キーボードの入力を、キー・クリック・サイドボタン・ホイールへ直感的に割り当て、短押し／長押し、複合入力、アプリ別profileを迷わず設定できることを優先します。
+
+中核UXの不変条件:
+
+- キーだけを特別扱いせず、実行内容としてMouse Left/Right/Middle/X1/X2/WheelUp/WheelDownをfirst-classに扱う
+- GUIで文字列tokenを暗記させない。物理記録または明示的なクイック操作から設定できる
+- `記録 → 必要なら編集 → テスト → 保存`を同じ編集面で完結させる
+- controllerを有効にしても中核sectionの名称・階層をcontroller中心へ変更しない
+- controller詳細はprogressive disclosureとし、不要な通常ユーザーにはDOMごと見せない
+- UI改修では `https://impeccable.style/`、`https://www.tasteskill.dev/`、`https://github.com/emilkowalski/skills` を参照し、カードの入れ子、過剰な装飾、曖昧な状態表示を避ける
+
 
 ### 全体コントローラーゲート
 
@@ -83,6 +95,8 @@ UIの`機能を停止して設定画面から隠す`はVisibleとEnabledを同�
 - rc4でBetterJoyの`hid_enumerate(0,0)`＋manual 3rd-party registrationを確認し、Usage-filterと自由入力Stable IDを廃止した。
 - rc3監査で、XInput長押しのkey生成／validationがJoy-Conだけに限定されていた不具合を修正した。
 - コントローラーOFF処理がマウス／キーボード長押しまで全消去しないことを回帰試験で固定した。
+- rc4監査で、Web UIへ文字入力すればホイール出力自体は実行可能なのに、`実行内容を記録`はmouse eventを意図的に捨て、Win32 fallback editorもmouse outputをrejectしていた不整合を確認した。
+- rc5でWheelUp/WheelDownとX1/X2の出力記録、全マウス出力のGUIクイック追加、Win32 fallbackのmouse output保存／テストを追加し、出力エンジンをcontroller非依存名へ整理した。
 
 ## 5. 先行実装として確認したBetterJoyコード
 
@@ -119,7 +133,9 @@ Rule.Input Kind                   // Mouse / Key / JoyCon / XInput
 
 ## 8. 主要ファイル
 
-- `main.go`: App、Config、rule rebuild、HTTP API、hooks、profiles
+- `main.go`: App、Config、rule rebuild、HTTP API、hooks、profiles、物理入出力record
+- `output_windows.go`: controller非依存のキー／マウス出力、Tap、Hold出力
+- `output_validation_windows.go`: 実行内容validation
 - `controller_feature_windows.go`: 全体ゲート、worker同期、API
 - `controller_input_windows.go`: Joy-Con／XInput共通状態、record、Tap、長押し、Hold
 - `longpress_windows.go`: 長押し状態機械。Joy-ConとXInputの両方を扱う
@@ -131,6 +147,7 @@ Rule.Input Kind                   // Mouse / Key / JoyCon / XInput
 - `xinput_windows.go`: DLL load、P1～P4 polling
 - `joycon_ui_windows.go`: true-hide UI、generic restore control、全HID manual registration list
 - `joycon_web_windows.go`: controller/Joy-Con API state
+- `output_recording_windows_test.go`: ホイール／サイドボタン出力record回帰
 - `controller_feature_windows_test.go`: default OFF、worker停止、rule保存、late event、長押し分離
 - `docs/REGRESSION_CHECKLIST.md`: 実機検証正本
 

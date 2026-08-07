@@ -47,7 +47,7 @@ window.fetch=async function(input,init){
 function findRuleSection(){
   return [...document.querySelectorAll('section.section')].find(s=>{
     const t=s.querySelector('.section-title');
-    return t&&(t.textContent.includes('マウスボタンの割り当て')||t.textContent.includes('マウス・キーボード・ゲームコントローラーの割り当て'));
+    return t&&(t.textContent.includes('マウス・キーボードの割り当て')||t.textContent.includes('マウスボタンの割り当て')||t.textContent.includes('マウス・キーボード・ゲームコントローラーの割り当て'));
   });
 }
 
@@ -79,11 +79,11 @@ function injectRestoreControl(){
 function restoreRulePresentation(){
   const ruleSection=findRuleSection();
   const title=ruleSection&&ruleSection.querySelector('.section-title');
-  if(title)title.textContent='マウスボタンの割り当て';
+  if(title)title.textContent='マウス・キーボードの割り当て';
   const editorTitle=ruleSection&&[...ruleSection.querySelectorAll('.subpanel-title')].find(e=>e.textContent.includes('選択中の割り当て')||e.textContent.includes('マウス割り当て'));
-  if(editorTitle)editorTitle.textContent='選択中のマウス割り当てを編集';
+  if(editorTitle)editorTitle.textContent='選択中の割り当てを編集';
   const save=byId('saveRule');
-  if(save)save.textContent='選択中のマウス割り当てを保存';
+  if(save)save.textContent='選択中の割り当てを保存';
 }
 
 function removeControllerUI(){
@@ -125,7 +125,7 @@ function injectVisiblePanels(){
     bindPanel();
   }
   const title=ruleSection.querySelector('.section-title');
-  if(title)title.textContent='マウス・キーボード・ゲームコントローラーの割り当て';
+  if(title)title.textContent='マウス・キーボードの割り当て';
   const editorTitle=[...ruleSection.querySelectorAll('.subpanel-title')].find(e=>e.textContent.includes('マウス割り当て'));
   if(editorTitle)editorTitle.textContent='選択中の割り当てを編集';
   const save=byId('saveRule');

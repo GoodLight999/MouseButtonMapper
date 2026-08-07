@@ -12,10 +12,10 @@
    - Windows test/vet
    - Windows GUI build
 5. 同じheadから次を生成する。
-   - `MouseButtonMapper-v8.4.0-rc4.exe`
-   - `MouseButtonMapper-v8.4.0-rc4-windows-x64.zip`
-   - `MouseButtonMapper-v8.4.0-rc4-source.zip`
-   - `MouseButtonMapper-v8.4.0-rc4-SHA256SUMS.txt`
+   - `MouseButtonMapper-v8.4.0-rc5.exe`
+   - `MouseButtonMapper-v8.4.0-rc5-windows-x64.zip`
+   - `MouseButtonMapper-v8.4.0-rc5-source.zip`
+   - `MouseButtonMapper-v8.4.0-rc5-SHA256SUMS.txt`
 6. 独立検算する。
    - artifact digest
    - manifest SHA-256
@@ -25,7 +25,7 @@
 7. PR本文へfinal head、CI run、artifact ID、SHA-256、未確認実機項目を記録する。
 8. RCは実機試験用と明記し、stable tagを付けない。
 
-## rc4必須回帰
+## rc5必須回帰
 
 - fresh/old configでcontroller featureがdefault非表示・OFF
 - OFF時にJoy-Con／XInput workerが起動しない
@@ -38,6 +38,9 @@
 - vendor-specific HIDを含む全interfaceがmanual登録候補へ出る
 - 未登録HIDを自動Openせず、登録済みexact fingerprintだけをOpenする
 - XInput long-press key／validationが動く
+- X1/X2とWheelUp/WheelDownを短押し／長押し出力として記録・保存・テストできる
+- Web GUIのクイック操作からLeft/Right/Middle/X1/X2/WheelUp/WheelDownを追加できる
+- controllerを表示しても通常rule sectionがmouse/keyboard中心の名称・階層を維持する
 
 ## Stable release
 
