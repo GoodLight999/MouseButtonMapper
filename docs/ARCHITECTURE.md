@@ -1,60 +1,126 @@
 # Architecture
 
-## 実行時データフロー
+## 中核データフロー
 
 ```text
-物理マウス/キーボード
+physical mouse / keyboard
         │
         ▼
-低レベルフック専用スレッド
-        │  状態照合・抑制判定
-        ├──────────────► CallNextHookEx
-        │
+WH_MOUSE_LL / WH_KEYBOARD_LL dedicated thread
+        │  short state/suppression decision
+        ├────────► CallNextHookEx
         ▼
-actionCh（短い非同期受け渡し）
-        │
+actionCh
         ▼
 outputWorker
-        │
         ▼
-SendInput（dwExtraInfoマーカー付き）
+output_windows.go
+        ▼
+SendInput(extraInfoMarker)
 ```
 
-フックコールバックを軽く保つことが安定性の中心です。
+フックcallbackを短く保つことが最優先です。`output_windows.go`はcontroller subsystemから独立した中核で、KeyとMouse（Left/Right/Middle/X1/X2/WheelUp/WheelDown）を同じrule outputとして処理します。
 
-## 並行処理
+## Runtime workers
 
-- Hook thread: Windowsメッセージループとフック登録
-- Output worker: 変換後入力の送信
-- Config writer: JSONの安全な保存
-- Hook watchdog: 入力進行とフック活動を比較し再登録
-- Foreground monitor: WinEventHookと定期確認
-- HTTP server: localhost GUI API
-- Long-press timers: `time.AfterFunc`でしきい値を監視し、結果だけを既存`actionCh`へ渡す
+- Hook thread: low-level hooksとmessage loop
+- Output worker: queued rule output
+- Config writer: JSON保存
+- Hook watchdog: hook再登録
+- Foreground monitor: WinEventHook＋fallback polling
+- HTTP server: `127.0.0.1`のrandom port
+- Long-press timers: callbackは結果をqueueへ渡すだけ
+- Joy-Con worker: HID enumerate/open/read/reconnect
+- XInput worker: dynamic DLL loadとP1～P4 polling
 
-## プロファイル状態
+## 全体コントローラーゲート
 
-- Base profile: 通常時に使うプロファイル
-- Editor profile: GUIで編集しているプロファイル
-- Effective profile: 現在入力変換へ適用中のプロファイル
+```text
+Config.Controller.Enabled
+        │
+        ├─ false ─► controller workers absent
+        │           controller events ignored
+        │           detailed UI hidden
+        │           controller rules preserved but inactive
+        │
+        └─ true ──► JoyConWorker + XInputWorker
+                    shared controller rule adapter
+```
 
-これらを単一変数へ統合してはいけません。
+ゲートはworker開始、event入口、rule rebuild、UIの四層で適用します。一層だけに依存してはいけません。
 
-## 公開境界
+OFF切替順序:
 
-HTTPサーバーは`127.0.0.1`のランダムポートへbindします。外部インターフェースへbindしてはいけません。
+1. config gateをfalseにする
+2. active rulesからcontroller ruleを除外する
+3. controller DOWN／pending／long-press／Hold outputを解放する
+4. workersを停止する
+5. statusをdisabledへ戻す
 
-## 設定互換性
+これにより停止途中の遅延callbackは入口で破棄されます。mouse/key stateは変更しません。
 
-`Config.Version`は現在9です。新規フィールドは原則optionalとして追加し、古いJSONを読み込めるようにします。削除や名称変更が必要な場合は明示的な移行処理を入れます。
+## Controller data flow
 
+```text
+Nintendo / compatible Raw HID          XInput
+              │                          │
+              ▼                          ▼
+        JoyConWorker                XInputWorker
+              │                          │
+              └──────────┬───────────────┘
+                         ▼
+          handleControllerInputEvent
+                         │
+                         ▼
+shared pressed set / recording / combinations /
+Tap / long press / Hold / output queue
+```
 
-## 長押し状態機械
+保存形式は`Item{Kind, Code}`です。
 
-- 長押し判定は、ルールの最後の入力を押した時点で開始します。
-- フックコールバック内ではタイマー待機を行いません。`time.AfterFunc`のコールバックも`SendInput`を直接呼ばず、既存の出力キューへ渡します。
-- しきい値より前に離した場合は短押し出力、しきい値以後は長押し出力またはキャンセルを一度だけ確定します。
-- タイマー発火とUPイベントが競合しても、トークンと状態フラグにより二重実行しません。
-- 終了開始時は`shuttingDown`を立て、`shutdownCh`で出力ワーカーを止めます。`actionCh`自体は閉じず、遅れて戻ったタイマーが閉じたチャネルへ送信するpanicを防ぎます。
-- 単押し長押し中に、その入力がより長い組み合わせルールの前置入力として使われた場合、単押し側を中止します。
-- 長押し判定の対象はX1/X2または修飾キー以外のキーボードキーです。左・右・中クリックは通常操作を壊さないため対象外です。
+- Joy-Con: `JoyCon:L`, `JoyCon:StickUp`
+- XInput: `XInput:P1:LB`, `XInput:P2:A`
+
+runtime state keyにはKindを含め、source間のcollisionを防ぎます。
+
+## Raw HID safety
+
+- BetterJoyの3rd-party登録方式を参考に、Windowsが公開する全HID interfaceを列挙する
+- 純正Joy-Conは既知VID/PIDでauto detect可能
+- unknown HIDは自動Openせず、UIで正確なpath fingerprintを明示登録したinterfaceだけを左Joy-Con互換として扱う
+- 登録はVID/PID/serial/fingerprintを保持し、exact pathを優先してserialを再接続fallbackにする
+- 明示登録済みdeviceだけR/W OpenとNintendo report-mode commandを試し、拒否時はread-onlyへ縮退する
+- unsupported reportを別形式として推測せず、lengthとbounded hexを診断する
+- closeとwriteをmutexで直列化し、blocking readは`CancelIoEx`で解除する
+
+## XInput safety
+
+- DLLは利用可能なものをruntime loadする
+- packet numberの変化だけを差分処理する
+- trigger／stickにpress/releaseの別thresholdを使う
+- direction changeはrelease-before-press
+- disconnect/API errorで全DOWNへsynthetic UP
+
+## Rule and long-press state
+
+- controller feature OFFはstored ruleを変更せず、active rule rebuildでfilterする
+- mouse/key long-pressとcontroller long-pressは別key namespaceを使う
+- Joy-ConとXInputの両方をcontroller long-press triggerとしてvalidateする
+- timerとUPが競合しても一度だけcompleteする
+- Hold outputはreference countし、physical keyを勝手にreleaseしない
+
+## Profile state
+
+- Base profile: 通常時profile
+- Editor profile: GUIで編集中
+- Effective profile: runtime適用中
+
+三者を同じ変数へ統合しない。controller setting/calibration saveもprofile IDへbindする。
+
+## Config compatibility
+
+`Config.Version`は11です。`Controller.Visible`と`Controller.Enabled`の欠落はfalseとして扱います。Visible=falseでは専用UIを生成せず、Enabled=falseではworkerを起動しません。新fieldは原則optionalとし、旧profile/rule/auto-switchを保存時に失わないようにします。
+
+## Security boundary
+
+HTTP serverはlocalhostだけへbindします。外部interfaceへ公開しません。自己注入eventは`extraInfoMarker`で除外します。

@@ -14,6 +14,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
@@ -31,6 +33,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
@@ -41,13 +45,30 @@ jobs:
       - name: Windows vet
         shell: pwsh
         run: go vet -unsafeptr=false ./...
-      - name: Build and package
+      - name: Build release-candidate artifacts
         shell: pwsh
-        run: .\scripts\package.ps1 -Version 8.3.0
-      - name: Upload portable package
+        run: |
+          .\scripts\package.ps1 -Version 8.4.0-rc5
+          Copy-Item MouseButtonMapper.exe dist\MouseButtonMapper-v8.4.0-rc5.exe
+          git archive --format=zip --output=dist/MouseButtonMapper-v8.4.0-rc5-source.zip HEAD
+          $files = @(
+            "dist\MouseButtonMapper-v8.4.0-rc5.exe",
+            "dist\MouseButtonMapper-v8.4.0-rc5-windows-x64.zip",
+            "dist\MouseButtonMapper-v8.4.0-rc5-source.zip"
+          )
+          $lines = foreach ($file in $files) {
+            $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $([IO.Path]::GetFileName($file))"
+          }
+          $lines | Set-Content -Encoding ascii dist\MouseButtonMapper-v8.4.0-rc5-SHA256SUMS.txt
+      - name: Upload release-candidate artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: MouseButtonMapper-windows-x64
-          path: dist/MouseButtonMapper-v8.3.0-windows-x64.zip
+          name: MouseButtonMapper-v8.4.0-rc5
+          path: |
+            dist/MouseButtonMapper-v8.4.0-rc5.exe
+            dist/MouseButtonMapper-v8.4.0-rc5-windows-x64.zip
+            dist/MouseButtonMapper-v8.4.0-rc5-source.zip
+            dist/MouseButtonMapper-v8.4.0-rc5-SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 30

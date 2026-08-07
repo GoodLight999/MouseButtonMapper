@@ -1,137 +1,215 @@
-# MouseButtonMapper 完全引き継ぎ資料
+# MouseButtonMapper 引き継ぎ正本
 
-この文書は、別スレッドのLLMまたは新しい開発者がリポジトリURLだけを受け取り、安全に開発を再開するための正本です。
+この文書は、リポジトリURLだけを渡された別スレッド／開発者が、現状を誤認せず作業を再開するための正本です。
 
-## 1. プロジェクトの目的
+## 1. Repositoryと状態
 
-Windows上で、多ボタンマウスの入力組み合わせをキー操作へ変換するポータブル常駐アプリを提供します。
+- Repository: `https://github.com/GoodLight999/MouseButtonMapper`
+- 安定版: `main` / `8.3.0`
+- 開発branch: `feature/joycon-l`
+- Draft PR: `#5`
+- 現在のRC: `8.4.0-rc5`
+- branch起点: `3126d531cff93c519bdf3634847d553033787940`
+- 最終head、全緑CI run、artifact ID、SHA-256: PR #5本文を正本とする
 
-優先順位は次の通りです。
+PRは実機確認完了までDraft・未マージを維持する。過去チャット添付、古いRC、`trash`／archiveを正本にしない。
 
-1. 入力を壊さず安定して常駐すること
-2. 設定が直感的で、記録操作だけで割り当てられること
-3. 既存設定を失わないこと
-4. 機能追加より回帰防止を優先すること
+## 2. 製品方針
 
-## 2. 現在の基準版
+MouseButtonMapperの中核は、安定したマウス／キーボード割り当てです。ゲームコントローラー対応は任意の実験機能であり、中核機能を巻き込んで失敗させてはいけません。
 
-- Version: `8.3.0`
-- Architecture: Go / Win32 low-level hooks / localhost Web UI / Edge app window
-- Target: Windows x64
-- Entry point: `main.go`
-- App-specific matching: `autoswitch_logic.go`
-- Embedded GUI and default config: `web_assets.go`
-- Icon resource: `rsrc_amd64.syso`
+製品ポジションは「GUI-firstの小さなAHK系リマッパー」です。AutoHotkeyのスクリプト言語や巨大な自動化機能を再実装することは目的にしません。代わりに、マウス／キーボードの入力を、キー・クリック・サイドボタン・ホイールへ直感的に割り当て、短押し／長押し、複合入力、アプリ別profileを迷わず設定できることを優先します。
 
-## 3. ユーザーが明示した必須仕様
+中核UXの不変条件:
 
-以下は仕様であり、整理の際に削除してはなりません。
+- キーだけを特別扱いせず、実行内容としてMouse Left/Right/Middle/X1/X2/WheelUp/WheelDownをfirst-classに扱う
+- GUIで文字列tokenを暗記させない。物理記録または明示的なクイック操作から設定できる
+- `記録 → 必要なら編集 → テスト → 保存`を同じ編集面で完結させる
+- controllerを有効にしても中核sectionの名称・階層をcontroller中心へ変更しない
+- controller詳細はprogressive disclosureとし、不要な通常ユーザーにはDOMごと見せない
+- UI改修では `https://impeccable.style/`、`https://www.tasteskill.dev/`、`https://github.com/emilkowalski/skills` を参照し、カードの入れ子、過剰な装飾、曖昧な状態表示を避ける
 
-- インストーラーを前提にしない。EXEを任意の場所へ置いて使えること。
-- 自動起動はスタートアップフォルダーのショートカットで行うこと。
-- 多重起動を拒否し、二度目の起動は既存GUIを表示すること。
-- 入力記録・実行内容記録は、すべての同時押しを離した時点で自動確定すること。
-- 記録開始ボタンは明瞭で目立つこと。
-- チェック欄は文字記号ではなく、操作可能な本物のチェックボックスであること。
-- 保存ボタンは「何を保存するか」が文言だけで判別できること。
-- 設定対象、通常時プロファイル、現在適用中プロファイルを混同しないこと。
-- 既存の自動切替ルールを選択し、条件・対象プロファイルを編集して保存できること。
-- 自動切替の優先順位は数字で表示し、数字が小さいルールから判定すること。
-- 一つの自動切替ルールに複数条件がある場合はAND条件とすること。
-- 自動切替の有効・無効表示は、画面上だけの未保存状態ではなく実際の内部状態を表すこと。
-- 設定画面を前面に出しても、直前の外部アプリを判定対象として維持すること。
-- 右クリックなど通常のマウス操作を失わせないこと。
-- 緊急停止手段を常に残すこと。
-- 同じ入力で短押しと長押しを分岐できること。
-- 長押し時は別の実行内容を1回だけ発動するか、短押し時の実行をキャンセルできること。
-- 長押ししきい値は100〜5000msで設定できること。
-- 長押しタイマー待機や`SendInput`をフックコールバックへ入れないこと。
 
-## 4. 入力コアの重要設計
+### 全体コントローラーゲート
 
-### フック
+`Config.Controller.Enabled`が全入力経路の実行ゲート、`Config.Controller.Visible`が専用UIの表示ゲートです。
 
-- `WH_MOUSE_LL`と`WH_KEYBOARD_LL`を専用OSスレッドに設置します。
-- フックコールバックは速やかに戻す必要があります。
-- 出力は`actionCh`へ渡し、`outputWorker`が`SendInput`を実行します。
-- フックがWindowsから無言で解除された可能性を監視し、必要なら再登録します。
-- 自己注入イベントは`dwExtraInfo`の`extraInfoMarker`で識別します。
+- `Config.Version`: 11
+- 新規設定: `Visible=false / Enabled=false`
+- Version 10以前からの移行: Enabledだった場合だけVisibleを維持。それ以外は非表示・OFF
+- OFF時:
+  - Joy-Con／互換Raw HID workerを起動しない
+  - XInput workerを起動しない
+  - 遅れて届くコントローラーイベントを無視する
+  - コントローラー専用sectionとHold設定をDOMから削除する
+  - コントローラー入力を含むルールをactive rulesから外す
+  - 保存済みrule／profile／Joy-Con設定は削除しない
+  - コントローラー由来の長押し・Hold・DOWN状態を解放する
+  - マウス／キーボードのDOWN・長押し・ルールは維持する
+- ON時:
+  - Joy-Con／互換HIDとXInput subsystemを開始する
+  - 保存済みコントローラールールを再びactive rulesへ含める
 
-### 設定保存
+UIの`機能を停止して設定画面から隠す`はVisibleとEnabledを同時にfalseへ変更する。隠した後は一般管理欄の小さな`実験機能を表示`だけを残す。BetterJoy／JoyToKeyへ外注する場合は非表示・OFFのまま使う。外部ツールが生成するキーボード／マウス入力は通常経路で処理できる。
 
-- 保存先: `%LOCALAPPDATA%\MouseButtonMapper\config.json`
-- 設定書き込みは`configSaveCh`経由でワーカーが行います。
-- 更新時はバックアップと一時ファイルを用います。
-- 設定スキーマを変更する際は旧設定の読込互換性を維持します。
+## 3. 実装済み機能
 
-### 長押し
+### 中核
 
-- 設定フィールドは`LongPressEnabled`、`LongPressMs`、`LongPressAction`、`LongPressOutput`です。旧設定には存在しないため、すべて後方互換のoptionalフィールドです。
-- `LongPressAction`は`Execute`または`Cancel`です。
-- しきい値到達時の処理は`longpress_windows.go`に隔離されています。
-- タイマーとUPの競合時に二重発火しないこと、短押し・長押し・キャンセルの境界をWindowsテストで確認します。
-- 終了開始後は`shuttingDown`により新しい出力を拒否し、出力ワーカーは`shutdownCh`で停止します。長押しタイマーとの競合を避けるため`actionCh`はcloseしません。
-- X1/X2または修飾キー以外のキーボードキーだけを対象とします。左・右・中クリックは対象外です。
+- Windows低レベルマウス／キーボードフック
+- action queue経由の`SendInput`
+- 入出力記録、短押し、長押し実行／キャンセル
+- プロファイルと前面アプリ自動切替
+- 多重起動拒否、トレイ、緊急停止、フックwatchdog
+- 旧設定互換と安全な設定保存
 
-### 自動プロファイル切替
+### 任意コントローラー入力
 
-- `SetWinEventHook(EVENT_SYSTEM_FOREGROUND)`で前面変更を受信します。
-- 取りこぼし対策として`GetForegroundWindow`を1秒間隔でも確認します。
-- PIDは`GetWindowThreadProcessId`、パスは`QueryFullProcessImageNameW`で取得します。
-- パス取得失敗時はToolhelpスナップショットからプロセス名を補完します。
-- プロセス名は`.exe`の有無を同一視し、大文字小文字を区別しません。
-- 条件はプロセス名、タイトル部分一致、パス部分一致です。
-- 複数条件はANDです。
-- 複数ルールが一致した場合は配列の先頭、すなわち優先順位の数字が最小のものを使います。
-- 入力が押下中の場合はプロファイル切替を保留し、入力が完全に離れた境界で切り替えます。
+- 純正Joy-Con（L）: Nintendo HID `057e:2006`
+- Switch互換Raw HID（rc4でBetterJoy方式へ修正）:
+  - SetupAPIでWindowsが公開する全HID interfaceを列挙する。Usageによる事前除外はしない
+  - unknown HIDは自動接続せず、UIで明示選択した正確なpath fingerprintだけを左Joy-Con互換として登録
+  - 登録にはVID/PID/serial/fingerprint/productを保存し、再接続時はfingerprint優先・serial fallbackで照合
+  - 選択済みinterfaceだけをOpenする。書込み可能ならNintendo `0x03` report-mode commandを試し、Open/Write拒否時だけread-onlyへ縮退
+  - `0x21`、`0x30`、`0x3f`、7バイト／先頭0付き8バイトinput-only報告
+  - metadata取得失敗interfaceもpath fingerprint、path由来VID/PID、inspect error付きで候補へ残す
+  - 未対応report長と先頭hexの診断
+- XInput:
+  - `xinput1_4`→`xinput1_3`→`xinput9_1_0`の順で動的ロード
+  - P1～P4
+  - A/B/X/Y、D-pad、LB/RB、Start/Back、stick press、LT/RT、左右stick方向
+  - trigger／stickヒステリシス、切断時の合成UP
+- 共通ルール:
+  - コントローラー＋マウス／キーボード複合入力
+  - Tap、長押し、Hold
+  - キー、同時キー、マウスボタン、ホイール出力
+  - 切断／OFF／reload／緊急停止／終了時の安全解放
 
-## 5. GUI
+## 4. 重要なデバッグ結果
 
-GUIはEXE内に埋め込んだHTML/CSS/JavaScriptを、localhostのランダムポートで配信します。通常はEdgeの`--app`ウィンドウで開きます。
+- rc1が互換Joy-Conを認識しなかった主因は、列挙とOpenの双方で純正VID/PIDだけを許可していたこと。
+- Steamだけが入力を取れる互換品は、Windows XInput／通常DirectInputではなくSwitch系Raw HIDをSteam/SDLが直接解釈している可能性が高い。
+- rc2でRaw HID候補とXInputを追加した。
+- rc3でコントローラー機能をdefault OFFへ移動したが、専用の大きな有効化sectionが常時残り、「設定画面から隠す」という要求を満たしていなかった。
+- rc4でVisibleとEnabledを分離し、専用UIをDOMから完全除去できるよう修正した。
+- rc4でBetterJoyの`hid_enumerate(0,0)`＋manual 3rd-party registrationを確認し、Usage-filterと自由入力Stable IDを廃止した。
+- rc3監査で、XInput長押しのkey生成／validationがJoy-Conだけに限定されていた不具合を修正した。
+- コントローラーOFF処理がマウス／キーボード長押しまで全消去しないことを回帰試験で固定した。
+- rc4監査で、Web UIへ文字入力すればホイール出力自体は実行可能なのに、`実行内容を記録`はmouse eventを意図的に捨て、Win32 fallback editorもmouse outputをrejectしていた不整合を確認した。
+- rc5でWheelUp/WheelDownとX1/X2の出力記録、全マウス出力のGUIクイック追加、Win32 fallbackのmouse output保存／テストを追加し、出力エンジンをcontroller非依存名へ整理した。
 
-過去にWin32手組みGUIでチェックボックス・表・レイアウトが崩壊し、内蔵WebView2の未完成実装では空白ウィンドウになりました。したがって、GUI基盤を交換する変更は実験ブランチでのみ行い、安定版へ直接入れてはいけません。
+## 5. 先行実装として確認したBetterJoyコード
 
-## 6. ファイル構成
+rc4では一般論ではなく、`Davidobot/BetterJoy`の次の実コードを確認した。
 
-- `main.go`: Windowsアプリ本体。フック、出力、設定、HTTP API、トレイ、Win32処理。
-- `autoswitch_logic.go`: OS非依存の自動切替判定。
-- `autoswitch_logic_test.go`: 自動切替の単体テスト。
-- `web_assets.go`: 埋め込みWeb GUIと既定設定。
-- `longpress_logic.go`: OS非依存のしきい値・設定正規化。
-- `longpress_windows.go`: Windows入力状態と長押しタイマーの統合。
-- `longpress_logic_test.go` / `longpress_windows_test.go`: 境界・実行・キャンセルの試験。
-- `web_assets_test.go`: JSON妥当性、必須GUI要素、重複ID検査。
-- `version.go`: バージョン定数。
-- `rsrc_amd64.syso`: Windowsアイコンリソース。
-- `.github/workflows/ci.yml`: テスト、Windowsビルド、ポータブルZIP作成。
-- `.github/workflows/release.yml`: タグリリース。
+- `BetterJoyForCemu/Program.cs`: `hid_enumerate(0x0, 0x0)`で全HIDを列挙し、custom controllerをVID/PID/serialで照合してexact pathを`hid_open_path`する
+- `BetterJoyForCemu/3rdPartyControllers.cs`: 全HID一覧からユーザーが対象を選び、Pro／Left Joycon／Right Joyconのtypeを明示指定して保存する
+- `BetterJoyForCemu/Joycon.cs`: Nintendo output report長49、Attach時のreport-mode初期化とthird-party controller分岐
 
-## 7. 開発手順
+MouseButtonMapperはBetterJoyのコードをコピーしていない。互換品の入口設計として、全HID列挙・明示登録・exact path Openという方式を再実装した。現段階ではLeft Joy-Con互換だけを登録対象とする。
 
-1. `main`から作業ブランチを作る。
-2. 変更前にテストを追加する。
-3. 入力コアとGUIを同時に大改造しない。
-4. `gofmt`, `go test`, `go test -race`, Windowsクロスビルドを行う。
-5. Windows実機で回帰チェックリストを実施する。
-6. PRで差分と未確認事項を明記する。
-7. CI成功後にのみマージする。
+## 6. 並行処理の不変条件
 
-## 8. 現時点の既知制約
+- `WH_MOUSE_LL`／`WH_KEYBOARD_LL` callbackでSleep、HID I/O、設定保存、ファイルlog、`SendInput`を行わない。
+- 出力は`actionCh`へ渡し、output workerが実行する。
+- Joy-Con I/Oは`JoyConWorker`、XInputは`XInputWorker`で行う。
+- OFFへ切り替える前にconfig gateを下げ、遅延callbackを入口で捨てる。
+- HID `WriteFile`とhandle closeは同じmutexで直列化する。
+- 切断／停止時はDOWN中トークンへ合成UPを出し、Hold keyを残さない。
+- 物理的に押されているキーを合成UPで解放しない。
+- コントローラー失敗は正常な縮退状態であり、マウス／キーボード機能を止めない。
 
-- Linux環境ではWindows低レベルフックを実行試験できません。
-- コード署名は未導入です。
-- GUIはEdge/WebView2ランタイムに依存します。
-- `main.go`は依然として大きいため、今後の分割は機能単位・無変更移動・小PRで行います。
-- Tauri移行は安定版に未導入です。
+## 7. 設定互換性
 
-## 9. 次の開発者への禁止事項
+```text
+Config.Version = 11
+Config.Controller.Visible = false  // default
+Config.Controller.Enabled = false  // default
+Profile.JoyCon                    // optional, preserved while global OFF
+Rule.Input Kind                   // Mouse / Key / JoyCon / XInput
+```
 
-- 過去の破綻版を正本として参照しない。
-- 見た目だけのチェック記号をチェックボックスとして実装しない。
-- 終了方法のない記録モードを作らない。
-- 意味の曖昧な「保存」「適用」「基本設定」ボタンを増やさない。
-- 設定を守る目的で入力イベントをキューに長時間滞留させない。
-- 長押しを実装するためにフックコールバックを`Sleep`させない。
-- タイマーとUPの双方から長押し出力を二重実行しない。
-- フック内でログファイル書込、設定保存、長時間ロック待ちを行わない。
-- 実機未検証の状態を「完全修正」と断定しない。
+全体OFFは設定削除ではなくruntime filteringで実現する。ON/OFFのたびにrule、profile、calibration、manual HID registrationを消してはいけない。
+
+## 8. 主要ファイル
+
+- `main.go`: App、Config、rule rebuild、HTTP API、hooks、profiles、物理入出力record
+- `output_windows.go`: controller非依存のキー／マウス出力、Tap、Hold出力
+- `output_validation_windows.go`: 実行内容validation
+- `controller_feature_windows.go`: 全体ゲート、worker同期、API
+- `controller_input_windows.go`: Joy-Con／XInput共通状態、record、Tap、長押し、Hold
+- `longpress_windows.go`: 長押し状態機械。Joy-ConとXInputの両方を扱う
+- `joycon_hid_windows.go`: Windows SetupAPI／HID I/O
+- `joycon_worker.go`: 列挙、接続、read、reconnect、rescan gate
+- `joycon_logic.go`: report parserとstick処理
+- `joycon_app_windows.go`: Joy-Con subsystem接続
+- `xinput_logic.go`: XInput差分と閾値
+- `xinput_windows.go`: DLL load、P1～P4 polling
+- `joycon_ui_windows.go`: true-hide UI、generic restore control、全HID manual registration list
+- `joycon_web_windows.go`: controller/Joy-Con API state
+- `output_recording_windows_test.go`: ホイール／サイドボタン出力record回帰
+- `controller_feature_windows_test.go`: default OFF、worker停止、rule保存、late event、長押し分離
+- `docs/REGRESSION_CHECKLIST.md`: 実機検証正本
+
+## 9. 必須自動検証
+
+```text
+gofmt
+python scripts/check_public_repo.py
+go test ./...
+go test -race ./...
+go vet -unsafeptr=false ./...
+Windows go test ./...
+Windows go vet -unsafeptr=false ./...
+Windows GUI build/package
+```
+
+UI JavaScriptは抽出して`node --check`も行う。最終配布は同一branch headから生成し、次を独立確認する。
+
+- Actions artifact digest
+- SHA-256 manifest
+- standalone EXEとportable内部EXEのバイト一致
+- source ZIP commentと最終head SHAの一致
+- PE32+ Windows GUI x86-64
+
+## 10. 実機ゲート
+
+### 全体OFF
+
+- 起動直後にcontroller専用sectionが存在せず、一般管理欄の小さな実験機能restoreだけが見える
+- HID列挙／XInput監視が走らない
+- mouse/key rule、long press、profile switchが動く
+- BetterJoy／JoyToKeyのkeyboard/mouse出力を通常入力として扱える
+- ON→Hold中→OFFでkeyが残留しない
+- OFF→ONで保存済みcontroller ruleが復帰する
+
+### ON時
+
+- 純正Joy-Conの接続、全button、stick、battery、sleep/resume
+- 全HID interface一覧、対象のmanual registration、report診断、全input
+- XInput P1～P4のbuttons/triggers/sticks
+- disconnect/reconnect 20回
+- controller＋right-hand mouse/keyboard
+- game側との二重入力
+- 1時間連続input、8時間常駐
+
+完了までは安定版と呼ばず、PRをReady／Mergeしない。
+
+## 11. 禁止事項
+
+- controller featureを暗黙にONへ移行しない。
+- OFF時に保存済みcontroller設定を削除しない。
+- OFF時にmouse/key stateやlong pressを巻き添えで消さない。
+- 未知HIDを自動選択・自動Openしない。Nintendo subcommandはユーザーが明示登録したinterfaceにだけ送る。
+- 全HIDを候補表示するため、UIに誤選択警告を必ず維持する。
+- hook callbackへHID/XInput処理を入れない。
+- 実機未検証を「完全対応」「安定版」と断定しない。
+- PR #5を実機確認前にmergeしない。
+
+## 12. 次の担当者が最初に行うこと
+
+1. PR #5本文で最終head／CI／artifactを確認する。
+2. `Controller.Enabled=false`のruntime pathを先に回帰確認する。
+3. `docs/REGRESSION_CHECKLIST.md`の全体ゲートから実機試験を始める。
+4. 互換品が未対応なら、登録されたVID/PID/serial/fingerprint、report length、先頭hexを基にparser testを先に追加する。
+5. 全hardware gate完了後だけ8.4.0 stable化を検討する。

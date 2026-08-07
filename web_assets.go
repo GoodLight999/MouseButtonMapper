@@ -15,7 +15,7 @@ const webHTML = `<!doctype html>
 <body>
 <div class="app">
   <div class="topbar">
-    <div><h1 class="title">マウスボタンの割り当て</h1><div class="subtitle" id="versionText">MouseButtonMapper</div></div>
+    <div><h1 class="title">MouseButtonMapper</h1><div class="subtitle" id="versionText">マウスとキーボードの割り当て</div></div>
     <div class="badges">
       <span class="badge" id="runBadge">読込中</span>
       <span class="badge" id="effectiveBadge">適用中: 読込中</span>
@@ -88,7 +88,7 @@ const webHTML = `<!doctype html>
   </section>
 
   <section class="section">
-    <div class="section-head"><div><div class="section-title">マウスボタンの割り当て</div><div class="section-help" id="ruleContext">編集するプロファイルの割り当てを表示しています。</div></div></div>
+    <div class="section-head"><div><div class="section-title">マウス・キーボードの割り当て</div><div class="section-help" id="ruleContext">編集するプロファイルの割り当てを表示しています。</div></div></div>
     <div class="section-body">
       <div class="tablewrap"><table>
         <thead><tr><th class="check">有効</th><th>この操作をしたら</th><th>短押し時</th><th>長押し時</th><th class="check">最後の入力を通常動作させない</th><th class="check">サイド単押しを取り消す</th></tr></thead>
@@ -100,12 +100,12 @@ const webHTML = `<!doctype html>
       </div>
 
       <div class="subpanel" style="margin-top:12px">
-        <div class="subpanel-title">選択中のマウス割り当てを編集</div>
+        <div class="subpanel-title">選択中の割り当てを編集</div>
         <div id="ruleEmpty" class="muted">上の一覧から編集する割り当てを選択してください。</div>
         <div id="ruleEditor" class="editor-grid hidden">
           <label class="checkline"><input type="checkbox" id="ruleEnabled"> この割り当てを有効にする</label><span></span>
           <div class="field"><label for="ruleInput">この操作をしたら</label><input id="ruleInput" type="text"></div>
-          <div class="field"><label for="ruleOutput">短押し時の実行内容</label><input id="ruleOutput" type="text"><small>長押し専用にする場合は空欄でも構いません。</small></div>
+          <div class="field"><label for="ruleOutput">短押し時の実行内容</label><input id="ruleOutput" type="text"><div class="toolbar" aria-label="マウス操作を追加"><span class="muted">マウス操作:</span><button type="button" data-output-target="ruleOutput" data-output-token="左クリック">左クリック</button><button type="button" data-output-target="ruleOutput" data-output-token="右クリック">右クリック</button><button type="button" data-output-target="ruleOutput" data-output-token="中クリック">中クリック</button><button type="button" data-output-target="ruleOutput" data-output-token="サイド1">サイド1</button><button type="button" data-output-target="ruleOutput" data-output-token="サイド2">サイド2</button><button type="button" data-output-target="ruleOutput" data-output-token="ホイール上">ホイール↑</button><button type="button" data-output-target="ruleOutput" data-output-token="ホイール下">ホイール↓</button></div><small>キー・サイドボタン・ホイールは「実行内容を記録」でも登録できます。長押し専用にする場合は空欄でも構いません。</small></div>
           <label class="checkline"><input type="checkbox" id="ruleSuppress"> 最後の入力を通常動作させない</label>
           <label class="checkline"><input type="checkbox" id="rulePrefix"> サイド単押しを取り消す</label>
           <div class="span2 row"><button type="button" id="testOutput">短押し時の実行内容をテスト</button><span class="help">入力・実行内容の記録は、押したボタンやキーをすべて離すと自動終了します。</span></div>
@@ -114,11 +114,11 @@ const webHTML = `<!doctype html>
             <div id="longPressOptions" class="longpress-grid hidden">
               <div class="field"><label for="ruleLongMs">長押しと判定する時間</label><div class="row"><input id="ruleLongMs" type="number" min="100" max="5000" step="50"><span>ms</span></div><small>既定値は500ms。100〜5000msで指定します。</small></div>
               <div class="field"><label for="ruleLongAction">長押ししたとき</label><select id="ruleLongAction"><option value="Execute">別の実行内容を実行する</option><option value="Cancel">短押し時の実行をキャンセルする</option></select></div>
-              <div id="longOutputBlock" class="field span2"><label for="ruleLongOutput">長押し時の実行内容</label><input id="ruleLongOutput" type="text"><div class="record-buttons" style="margin-top:7px"><button type="button" id="recordLongOutput" class="record">● 長押し時の実行内容を記録</button><button type="button" id="testLongOutput">長押し時の実行内容をテスト</button></div></div>
+              <div id="longOutputBlock" class="field span2"><label for="ruleLongOutput">長押し時の実行内容</label><input id="ruleLongOutput" type="text"><div class="toolbar" aria-label="長押し出力へマウス操作を追加"><span class="muted">マウス操作:</span><button type="button" data-output-target="ruleLongOutput" data-output-token="左クリック">左クリック</button><button type="button" data-output-target="ruleLongOutput" data-output-token="右クリック">右クリック</button><button type="button" data-output-target="ruleLongOutput" data-output-token="中クリック">中クリック</button><button type="button" data-output-target="ruleLongOutput" data-output-token="サイド1">サイド1</button><button type="button" data-output-target="ruleLongOutput" data-output-token="サイド2">サイド2</button><button type="button" data-output-target="ruleLongOutput" data-output-token="ホイール上">ホイール↑</button><button type="button" data-output-target="ruleLongOutput" data-output-token="ホイール下">ホイール↓</button></div><div class="record-buttons" style="margin-top:7px"><button type="button" id="recordLongOutput" class="record">● 長押し時の実行内容を記録</button><button type="button" id="testLongOutput">長押し時の実行内容をテスト</button></div></div>
               <div class="statusbox span2"><div class="main">長押し判定の動作</div><div class="detail" id="longPressHelp">短く離すと短押し時の内容を実行し、指定時間まで押し続けると長押し時の内容を実行します。</div></div>
             </div>
           </div>
-          <div class="savebar span2"><span class="muted" id="ruleSaveHelp">このボタンは、選択中の割り当てだけを保存します。</span><button type="button" id="saveRule" class="primary large">選択中のマウス割り当てを保存</button></div>
+          <div class="savebar span2"><span class="muted" id="ruleSaveHelp">このボタンは、選択中の割り当てだけを保存します。</span><button type="button" id="saveRule" class="primary large">選択中の割り当てを保存</button></div>
         </div>
       </div>
     </div>
@@ -144,9 +144,9 @@ async function load(){if(busy)return;try{const res=await fetch('/api/state',{cac
 function appText(a){if(!a)return '取得前';const p=a.processName||'プロセス名不明';const t=a.title?' / '+a.title:'';return p+t}
 function conditionText(b){const a=[];if(b.processName)a.push('プロセス: '+b.processName);if(b.titleContains)a.push('タイトル: '+b.titleContains);if(b.pathContains)a.push('パス: '+b.pathContains);return a.join(' ＋ ')||'条件未設定'}
 function profileOptions(selected){return (state.profiles||[]).map(p=>'<option value="'+esc(p.id)+'" '+(p.id===selected?'selected':'')+'>'+esc(p.name)+'</option>').join('')}
-function render(full){if(!state)return;$('versionText').textContent='MouseButtonMapper '+state.version;$('runBadge').textContent=state.status;$('runBadge').className='badge '+(state.emergency?'danger':state.enabled?'ok':'warn');$('effectiveBadge').textContent='現在適用中: '+state.profileName;$('autoBadge').textContent='自動切替: '+(state.autoSwitchEnabled?'有効':'無効');$('autoBadge').className='badge '+(state.autoSwitchEnabled?'ok':'warn');$('toggleRunning').textContent=state.enabled&&!state.emergency?'変換を停止':'変換を開始';
+function render(full){if(!state)return;$('versionText').textContent='マウスとキーボードの割り当て · '+state.version;$('runBadge').textContent=state.status;$('runBadge').className='badge '+(state.emergency?'danger':state.enabled?'ok':'warn');$('effectiveBadge').textContent='現在適用中: '+state.profileName;$('autoBadge').textContent='自動切替: '+(state.autoSwitchEnabled?'有効':'無効');$('autoBadge').className='badge '+(state.autoSwitchEnabled?'ok':'warn');$('toggleRunning').textContent=state.enabled&&!state.emergency?'変換を停止':'変換を開始';
 renderProfiles();renderAuto();renderRules();$('lastInput').textContent=state.lastInput+(state.lastInputAt?'  '+state.lastInputAt:'');$('hookStatus').textContent=state.hookStatus;$('configPath').textContent=state.configPath;
-if(state.recordingMode){const names={input:'入力',output:'短押し時の実行内容','long-output':'長押し時の実行内容'};const name=names[state.recordingMode]||'実行内容';setMessage(name+'を記録中です。押したボタンやキーをすべて離すと、自動で登録して終了します。');$('recordInput').classList.toggle('active',state.recordingMode==='input');$('recordOutput').classList.toggle('active',state.recordingMode==='output');$('recordLongOutput').classList.toggle('active',state.recordingMode==='long-output');if(state.recordedText){if(state.recordingMode==='input')$('ruleInput').value=state.recordedText;if(state.recordingMode==='output')$('ruleOutput').value=state.recordedText;if(state.recordingMode==='long-output')$('ruleLongOutput').value=state.recordedText}}else{$('recordInput').classList.remove('active');$('recordOutput').classList.remove('active');$('recordLongOutput').classList.remove('active')}
+if(state.recordingMode){const names={input:'入力',output:'短押し時の実行内容','long-output':'長押し時の実行内容'};const name=names[state.recordingMode]||'実行内容';setMessage(name+'を記録中です。キー・サイドボタン・ホイールを操作してください。すべて離すと自動で登録して終了します。');$('recordInput').classList.toggle('active',state.recordingMode==='input');$('recordOutput').classList.toggle('active',state.recordingMode==='output');$('recordLongOutput').classList.toggle('active',state.recordingMode==='long-output');if(state.recordedText){if(state.recordingMode==='input')$('ruleInput').value=state.recordedText;if(state.recordingMode==='output')$('ruleOutput').value=state.recordedText;if(state.recordingMode==='long-output')$('ruleLongOutput').value=state.recordedText}}else{$('recordInput').classList.remove('active');$('recordOutput').classList.remove('active');$('recordLongOutput').classList.remove('active')}
 }
 function renderProfiles(){const base=$('baseProfile'),edit=$('editProfile');const opts=(state.profiles||[]).map(p=>'<option value="'+p.index+'">'+esc(p.name)+'</option>').join('');base.innerHTML=opts;edit.innerHTML=opts;base.value=String(state.baseProfile);edit.value=String(state.activeProfile)}
 function renderAuto(){if(document.activeElement!==$('autoEnabled'))$('autoEnabled').checked=!!state.autoSwitchEnabled;if(!dirtyDebounce&&document.activeElement!==$('autoDebounce'))$('autoDebounce').value=state.autoDebounceMs;$('monitorStatus').textContent=state.autoMonitorStatus||'起動準備中';$('foregroundNow').textContent=appText(state.foregroundApp);$('lastExternal').textContent=appText(state.lastExternalApp);$('autoDecision').textContent=state.autoDecision||'判定待ち';$('autoDecisionMain').textContent=(state.autoDecision||'判定待ち')+(state.autoDecisionAt?'  '+state.autoDecisionAt:'');$('autoDecisionDetail').textContent=state.autoDecisionDetail||'';
@@ -165,11 +165,13 @@ function captureField(kind){const a=state.lastExternalApp||{};let value='';if(ki
 async function profileOp(op,index,name){await applyResult(api('/api/profile',{op:op,index:index,name:name||''}))}
 async function createProfile(op){let current=state.profiles[state.activeProfile];let def=op==='duplicate'&&current?current.name+' のコピー':op==='rename'&&current?current.name:'';const name=prompt('プロファイル名',def);if(name===null)return;await profileOp(op,state.activeProfile,name)}
 async function deleteProfile(){if(!confirm('編集対象のプロファイル「'+state.editorProfileName+'」を削除しますか？'))return;await profileOp('delete',state.activeProfile,'')}
-async function ruleOp(op,target,delta){if(op!=='add'&&!state.rules[selectedRule]){setMessage('先にマウス割り当てを選択してください。',true);return}if(op==='delete'&&!confirm('選択中のマウス割り当てを削除しますか？'))return;try{const j=await api('/api/rule',{op:op,index:selectedRule,target:target==null?-1:target,delta:delta||0});state=j.state;if(op==='add')selectedRule=Math.max(0,state.rules.length-1);if(op==='delete')selectedRule=Math.max(0,Math.min(selectedRule,state.rules.length-1));dirtyRule=false;setMessage(j.message||'完了しました。');render(true)}catch(e){setMessage(e.message,true);await load()}}
+async function ruleOp(op,target,delta){if(op!=='add'&&!state.rules[selectedRule]){setMessage('先に割り当てを選択してください。',true);return}if(op==='delete'&&!confirm('選択中の割り当てを削除しますか？'))return;try{const j=await api('/api/rule',{op:op,index:selectedRule,target:target==null?-1:target,delta:delta||0});state=j.state;if(op==='add')selectedRule=Math.max(0,state.rules.length-1);if(op==='delete')selectedRule=Math.max(0,Math.min(selectedRule,state.rules.length-1));dirtyRule=false;setMessage(j.message||'完了しました。');render(true)}catch(e){setMessage(e.message,true);await load()}}
 async function toggleRule(index,field){selectedRule=index;await applyResult(api('/api/rule',{op:'toggle',index:index,field:field}))}
+function appendOutputToken(targetId,token){const input=$(targetId);if(!input)return;const parts=input.value.split('+').map(v=>v.trim()).filter(Boolean);if(!parts.includes(token))parts.push(token);input.value=parts.join(' + ');input.dispatchEvent(new Event('input',{bubbles:true}));input.focus();setMessage(token+'を実行内容へ追加しました。保存前に「実行内容をテスト」で確認できます。')}
+document.querySelectorAll('[data-output-target]').forEach(button=>button.addEventListener('click',()=>appendOutputToken(button.dataset.outputTarget,button.dataset.outputToken)));
 async function saveRule(){if(!state.rules[selectedRule])return;dirtyRule=false;await applyResult(api('/api/rule',{op:'save',index:selectedRule,enabled:$('ruleEnabled').checked,input:$('ruleInput').value,output:$('ruleOutput').value,suppressTrigger:$('ruleSuppress').checked,suppressPrefix:$('rulePrefix').checked,longPressEnabled:$('ruleLongEnabled').checked,longPressMs:Number($('ruleLongMs').value)||500,longPressAction:$('ruleLongAction').value,longPressOutput:$('ruleLongOutput').value}))}
 async function action(name,extra){const payload=Object.assign({action:name,index:selectedRule,output:$('ruleOutput').value,longOutput:$('ruleLongOutput').value},extra||{});await applyResult(api('/api/action',payload))}
-async function startRecord(kind){if(!state.rules[selectedRule]){setMessage('先に記録先のマウス割り当てを選択してください。',true);return}dirtyRule=false;await action(kind)}
+async function startRecord(kind){if(!state.rules[selectedRule]){setMessage('先に記録先の割り当てを選択してください。',true);return}dirtyRule=false;await action(kind)}
 function markRuleDirty(){dirtyRule=true}function markBindingDirty(){dirtyBinding=true}
 $('autoEnabled').addEventListener('change',autoEnabledChanged);$('autoDebounce').addEventListener('input',()=>dirtyDebounce=true);$('saveDebounce').addEventListener('click',saveDebounce);$('recheckAuto').addEventListener('click',()=>autoOp('recheck'));$('addCaptured').addEventListener('click',()=>autoOp('add-captured'));$('addEmpty').addEventListener('click',()=>autoOp('add-empty'));$('bindingTop').addEventListener('click',()=>autoOp('move',0));$('bindingUp').addEventListener('click',()=>autoOp('move',null,-1));$('bindingDown').addEventListener('click',()=>autoOp('move',null,1));$('bindingBottom').addEventListener('click',()=>autoOp('move',999999));$('duplicateBinding').addEventListener('click',()=>autoOp('duplicate'));$('deleteBinding').addEventListener('click',()=>autoOp('delete'));$('saveBinding').addEventListener('click',saveBinding);document.querySelectorAll('[data-capture]').forEach(b=>b.addEventListener('click',()=>captureField(b.dataset.capture)));['bindEnabled','bindName','bindProfile','bindProcess','bindTitle','bindPath'].forEach(id=>$(id).addEventListener('input',markBindingDirty));
 $('baseProfile').addEventListener('change',e=>profileOp('set-base',Number(e.target.value),''));$('editProfile').addEventListener('change',async e=>{selectedRule=0;dirtyRule=false;await profileOp('edit',Number(e.target.value),'')});$('newProfile').addEventListener('click',()=>createProfile('new'));$('duplicateProfile').addEventListener('click',()=>createProfile('duplicate'));$('renameProfile').addEventListener('click',()=>createProfile('rename'));$('deleteProfile').addEventListener('click',deleteProfile);
@@ -178,16 +180,18 @@ $('toggleRunning').addEventListener('click',()=>action('toggle-running'));$('eme
 load();pollTimer=setInterval(load,750);
 })();
 </script>
+<script src="/joycon-ui.js"></script>
 </body>
 </html>
 `
 
 const defaultConfigJSON = `{
-  "Version": 9,
-  "SavedBy": "8.3.0-go-default",
+  "Version": 11,
+  "SavedBy": "8.4.0-rc5-go-default",
   "SavedAt": "2026-07-05T00:00:00+09:00",
   "ActiveProfileId": "default",
   "AutoSwitch": {"Enabled": false, "DebounceMs": 350, "Bindings": []},
+  "Controller": {"Enabled": false, "Visible": false},
   "Profiles": [
     {
       "Id": "default",

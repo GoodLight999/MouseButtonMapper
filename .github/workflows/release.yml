@@ -24,17 +24,36 @@ jobs:
           if ("${{ github.ref_type }}" -eq "tag") {
             $version = "${{ github.ref_name }}".TrimStart("v")
           } else {
-            $version = "8.3.0-${{ github.run_number }}"
+            $version = "8.4.0-rc5-${{ github.run_number }}"
           }
           "value=$version" >> $env:GITHUB_OUTPUT
-      - name: Build portable package
+      - name: Test
         shell: pwsh
-        run: .\scripts\package.ps1 -Version "${{ steps.version.outputs.value }}"
+        run: |
+          go test ./...
+          go vet -unsafeptr=false ./...
+      - name: Build release artifacts
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.value }}"
+          .\scripts\package.ps1 -Version $version
+          Copy-Item MouseButtonMapper.exe "dist\MouseButtonMapper-v$version.exe"
+          git archive --format=zip --output="dist/MouseButtonMapper-v$version-source.zip" HEAD
+          $files = @(
+            "dist\MouseButtonMapper-v$version.exe",
+            "dist\MouseButtonMapper-v$version-windows-x64.zip",
+            "dist\MouseButtonMapper-v$version-source.zip"
+          )
+          $lines = foreach ($file in $files) {
+            $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $([IO.Path]::GetFileName($file))"
+          }
+          $lines | Set-Content -Encoding ascii "dist\MouseButtonMapper-v$version-SHA256SUMS.txt"
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v7
         with:
           name: MouseButtonMapper-release-${{ steps.version.outputs.value }}
-          path: dist/*.zip
+          path: dist/*
           if-no-files-found: error
       - name: Create GitHub Release
         if: github.ref_type == 'tag'
@@ -42,8 +61,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $zip = Get-ChildItem dist\*.zip | Select-Object -First 1
-          $hash = (Get-FileHash $zip.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-          $checksum = "$($zip.FullName).sha256"
-          "$hash  $($zip.Name)" | Set-Content -Encoding ascii $checksum
-          gh release create "${{ github.ref_name }}" $zip.FullName $checksum --generate-notes --title "MouseButtonMapper ${{ github.ref_name }}"
+          $version = "${{ steps.version.outputs.value }}"
+          $assets = Get-ChildItem dist\MouseButtonMapper-v$version*
+          gh release create "${{ github.ref_name }}" $assets.FullName --generate-notes --title "MouseButtonMapper ${{ github.ref_name }}"
