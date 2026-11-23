@@ -142,11 +142,11 @@ func parseMouseAliasVK(tok string) (uint32, bool) {
 	case "右サイド1", "右サイド上", "右サイドボタン1", "rside1", "rightside1":
 		return 0x7C, true // F13
 	case "右サイド2", "右サイド下", "右サイドボタン2", "rside2", "rightside2":
-		return 0x7D, true // F14
+		return 0x81, true // F18
 	case "dpi+ボタン", "dpi+", "dpiup", "dpi上", "上部ボタン1":
-		return 0x7E, true // F15
+		return 0x82, true // F19
 	case "dpi-ボタン", "dpi-", "dpidown", "dpi下", "上部ボタン2":
-		return 0x7F, true // F16
+		return 0x83, true // F20
 	}
 	return 0, false
 }

@@ -106,18 +106,18 @@ var sinoWealthPawnPlusLabels = []string{
 }
 
 var sinoWealthHIDKeys = []SinoWealthHIDKeyOption{
-	{0x68, "F13", "拡張Fキー (推奨)"},
-	{0x69, "F14", "拡張Fキー (推奨)"},
-	{0x6A, "F15", "拡張Fキー (推奨)"},
-	{0x6B, "F16", "拡張Fキー (推奨)"},
-	{0x6C, "F17", "拡張Fキー (推奨)"},
-	{0x6D, "F18", "拡張Fキー (推奨)"},
-	{0x6E, "F19", "拡張Fキー (推奨)"},
-	{0x6F, "F20", "拡張Fキー (推奨)"},
-	{0x70, "F21", "拡張Fキー (推奨)"},
-	{0x71, "F22", "拡張Fキー (推奨)"},
-	{0x72, "F23", "拡張Fキー (推奨)"},
-	{0x73, "F24", "拡張Fキー (推奨)"},
+	{0x68, "F13", "拡張Fキー (安全・推奨)"},
+	{0x6D, "F18", "拡張Fキー (安全・推奨)"},
+	{0x6E, "F19", "拡張Fキー (安全・推奨)"},
+	{0x6F, "F20", "拡張Fキー (安全・推奨)"},
+	{0x6C, "F17", "拡張Fキー (一部修飾キー注意)"},
+	{0x69, "F14", "拡張Fキー (Win併用注意)"},
+	{0x6A, "F15", "拡張Fキー (Win併用注意)"},
+	{0x6B, "F16", "拡張Fキー (Win+F16はシャットダウン注意)"},
+	{0x70, "F21", "拡張Fキー (Win併用注意)"},
+	{0x71, "F22", "拡張Fキー (Win併用注意)"},
+	{0x72, "F23", "拡張Fキー (Win併用注意)"},
+	{0x73, "F24", "拡張Fキー (Win併用注意)"},
 	{0x4B, "PageUp", "ナビゲーション"},
 	{0x4E, "PageDown", "ナビゲーション"},
 	{0x4A, "Home", "ナビゲーション"},
@@ -871,17 +871,18 @@ func sinoWealthPresetButtons(preset string) ([]SinoWealthButtonAction, error) {
 		{Index: 8, Kind: "key", HIDUsage: 0x4E}, // PageDown
 	}
 	switch preset {
-	case "mbm-side-f13-f14":
-		// Keep DPI+/- on hardware, map Right Side buttons to F13/F14 so they never collide with PageUp/PageDown
+	case "mbm-side-f13-f14", "mbm-side-safe":
+		// Keep DPI+/- on hardware, map Right Side buttons to F13/F18 (avoiding Windows hidden Win+F14/F15/F16 hotkeys)
 		base[7] = SinoWealthButtonAction{Index: 7, Kind: "key", HIDUsage: 0x68} // F13
-		base[8] = SinoWealthButtonAction{Index: 8, Kind: "key", HIDUsage: 0x69} // F14
+		base[8] = SinoWealthButtonAction{Index: 8, Kind: "key", HIDUsage: 0x6D} // F18
 		return base, nil
-	case "mbm-all-f13-f16":
-		// Map both Right Side (F13/F14) and DPI+/- (F15/F16) to conflict-free F-keys for full 9-button MouseButtonMapper control
-		base[5] = SinoWealthButtonAction{Index: 5, Kind: "key", HIDUsage: 0x6A} // F15
-		base[6] = SinoWealthButtonAction{Index: 6, Kind: "key", HIDUsage: 0x6B} // F16
+	case "mbm-all-f13-f16", "mbm-all-safe":
+		// Map Right Side (F13/F18) and DPI+/- (F19/F20) to Windows 11 conflict-free F-keys.
+		// Avoids Win+F14, Win+F15, Win+F16 (SlideToShutDown.exe), Win+F21..F24.
+		base[5] = SinoWealthButtonAction{Index: 5, Kind: "key", HIDUsage: 0x6E} // F19
+		base[6] = SinoWealthButtonAction{Index: 6, Kind: "key", HIDUsage: 0x6F} // F20
 		base[7] = SinoWealthButtonAction{Index: 7, Kind: "key", HIDUsage: 0x68} // F13
-		base[8] = SinoWealthButtonAction{Index: 8, Kind: "key", HIDUsage: 0x69} // F14
+		base[8] = SinoWealthButtonAction{Index: 8, Kind: "key", HIDUsage: 0x6D} // F18
 		return base, nil
 	case "factory-pawn-plus":
 		return base, nil

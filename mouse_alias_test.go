@@ -16,10 +16,10 @@ func TestMouseAliasMappingForRayPawnPlus(t *testing.T) {
 	updateMouseAliasesFromSinoWealth(st)
 
 	checks := map[uint32]string{
-		0x7C: "右サイド1",
-		0x7D: "右サイド2",
-		0x7E: "DPI+ボタン",
-		0x7F: "DPI-ボタン",
+		0x7C: "右サイド1",   // F13
+		0x81: "右サイド2",   // F18
+		0x82: "DPI+ボタン", // F19
+		0x83: "DPI-ボタン", // F20
 	}
 	for vk, want := range checks {
 		got, ok := mouseAliasNameForVK(vk)

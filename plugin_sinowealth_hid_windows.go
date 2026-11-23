@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -463,7 +464,7 @@ func swQueryCmd(hCmd uintptr, cmdID byte) ([]byte, error) {
 	return resp[:], nil
 }
 
-func swReadReport(hCmd, hCfg uintptr, cmdID byte) ([]byte, error) {
+func swReadReportOnce(hCmd, hCfg uintptr, cmdID byte) ([]byte, error) {
 	req := [sinoWealthCmdLen]byte{sinoWealthReportCmd, cmdID}
 	if r, _, err := swHidDSetFeature.Call(hCmd, uintptr(unsafe.Pointer(&req[0])), sinoWealthCmdLen); r == 0 {
 		return nil, fmt.Errorf("SetFeature(cmd=0x%02X) 失敗: %v", cmdID, err)
@@ -477,6 +478,24 @@ func swReadReport(hCmd, hCfg uintptr, cmdID byte) ([]byte, error) {
 		return nil, fmt.Errorf("期待しないレポート応答です (cmd=0x%02X, got=0x%02X)", cmdID, buf[1])
 	}
 	return buf, nil
+}
+
+// swReadReport reads a 520-byte report and confirms two consecutive reads match
+// so transient USB HID glitches never corrupt UI state or Read-Modify-Write patches.
+func swReadReport(hCmd, hCfg uintptr, cmdID byte) ([]byte, error) {
+	var prev []byte
+	for attempt := 0; attempt < 5; attempt++ {
+		cur, err := swReadReportOnce(hCmd, hCfg, cmdID)
+		if err != nil {
+			return nil, err
+		}
+		if prev != nil && bytes.Equal(prev, cur) {
+			return cur, nil
+		}
+		prev = cur
+		time.Sleep(15 * time.Millisecond)
+	}
+	return nil, fmt.Errorf("レポート 0x%02X の読み出しが安定しませんでした（再試行してください）", cmdID)
 }
 
 func swWriteReport(hCfg uintptr, report []byte) error {

@@ -476,10 +476,10 @@ function ensureHost(){
         '</div>' +
 
         '<div class="sw-block">' +
-          '<div class="sw-block-head"><div><b>MouseButtonMapper 連携ワンクリック最適化</b><div class="muted">通常キーボードと衝突しない F13〜F16 へオンボード割り当てを安全に書き換えます（センサー設定には触れません）。</div></div></div>' +
+          '<div class="sw-block-head"><div><b>MouseButtonMapper 連携ワンクリック最適化</b><div class="muted">Windows の隠しショートカット（Win+F16 シャットダウン等）と衝突しない F13 / F18 / F19 / F20 へ安全に書き換えます（センサー設定には触れません）。</div></div></div>' +
           '<div class="toolbar">' +
-            '<button type="button" id="swPresetSide" data-sw-act="1" class="primary">右サイド2ボタンを F13 / F14 に最適化（推奨）</button>' +
-            '<button type="button" id="swPresetAll" data-sw-act="1">右サイド(F13/F14) ＋ DPI±(F15/F16) 全9ボタン化</button>' +
+            '<button type="button" id="swPresetSide" data-sw-act="1" class="primary">右サイド2ボタンを F13 / F18 に最適化（推奨）</button>' +
+            '<button type="button" id="swPresetAll" data-sw-act="1">右サイド(F13/F18) ＋ DPI±(F19/F20) 全9ボタン化</button>' +
             '<button type="button" id="swPresetFactory" data-sw-act="1">Ray Pawn+ 標準ボタン配置に戻す</button>' +
           '</div>' +
         '</div>' +

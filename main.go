@@ -604,6 +604,7 @@ type App struct {
 	pendingTap           map[string]bool
 	consumedPrefix       map[string]bool
 	suppressedDown       map[string]bool
+	suppressedKeyDown    map[uint32]bool
 	longPress            map[string]*longPressState
 	longPressSeq         uint64
 
@@ -735,7 +736,7 @@ type App struct {
 	autoBlockedSince        time.Time
 }
 
-var app = &App{enabled: true, foregroundMonitorStatus: "起動準備中", mouseDown: map[string]bool{}, mouseDownAt: map[string]time.Time{}, keyDown: map[uint32]bool{}, controllerDown: map[string]bool{}, controllerPending: map[string]bool{}, controllerConsumed: map[string]bool{}, controllerHoldRules: map[string]Rule{}, activeHoldRules: map[string]Rule{}, heldMouseRefs: map[string]int{}, pendingTap: map[string]bool{}, consumedPrefix: map[string]bool{}, suppressedDown: map[string]bool{}, longPress: map[string]*longPressState{}, joyConOutputRefs: map[uint32]joyConOutputReference{}, joyConStatus: JoyConConnectionStatus{BatteryPercent: -1}, logCh: make(chan string, 4096), recordHeld: map[string]bool{}, recordingRuleIndex: -1, actionCh: make(chan outputJob, 8192), configSaveCh: make(chan []byte, 8), shutdownCh: make(chan struct{}), hookReady: make(chan struct{}), hookDone: make(chan struct{}), foregroundEventCh: make(chan uintptr, 32)}
+var app = &App{enabled: true, foregroundMonitorStatus: "起動準備中", mouseDown: map[string]bool{}, mouseDownAt: map[string]time.Time{}, keyDown: map[uint32]bool{}, controllerDown: map[string]bool{}, controllerPending: map[string]bool{}, controllerConsumed: map[string]bool{}, controllerHoldRules: map[string]Rule{}, activeHoldRules: map[string]Rule{}, heldMouseRefs: map[string]int{}, pendingTap: map[string]bool{}, consumedPrefix: map[string]bool{}, suppressedDown: map[string]bool{}, suppressedKeyDown: map[uint32]bool{}, longPress: map[string]*longPressState{}, joyConOutputRefs: map[uint32]joyConOutputReference{}, joyConStatus: JoyConConnectionStatus{BatteryPercent: -1}, logCh: make(chan string, 4096), recordHeld: map[string]bool{}, recordingRuleIndex: -1, actionCh: make(chan outputJob, 8192), configSaveCh: make(chan []byte, 8), shutdownCh: make(chan struct{}), hookReady: make(chan struct{}), hookDone: make(chan struct{}), foregroundEventCh: make(chan uintptr, 32)}
 
 func main() {
 	if hasCommandLineFlag("--self-test", "/self-test") {
@@ -1587,9 +1588,16 @@ func asyncKeyDown(vk uint32) bool {
 // forever.
 func (a *App) reconcilePhysicalStateLocked() {
 	for btn := range a.mouseDown {
+		trig := Item{Kind: "Mouse", Code: btn}
+		lpKey := longPressKey(trig)
+		// Buttons suppressed by WH_MOUSE_LL do not set GetAsyncKeyState's high bit.
+		// Never treat an active Hold or LongPress button as missed-UP based on GetAsyncKeyState.
+		if a.hasActiveHoldLocked(trig) || a.longPress[lpKey] != nil {
+			continue
+		}
 		if !asyncKeyDown(mouseButtonVK(btn)) {
-			a.abortLongPressForTriggerLocked(Item{Kind: "Mouse", Code: btn}, "missed mouse-up repaired")
-			delete(a.longPress, longPressKey(Item{Kind: "Mouse", Code: btn}))
+			a.abortLongPressForTriggerLocked(trig, "missed mouse-up repaired")
+			delete(a.longPress, lpKey)
 			delete(a.mouseDown, btn)
 			delete(a.mouseDownAt, btn)
 			delete(a.pendingTap, btn)
@@ -1601,10 +1609,19 @@ func (a *App) reconcilePhysicalStateLocked() {
 		if vk == VK_CONTROL || vk == VK_SHIFT || vk == VK_MENU {
 			continue
 		}
+		trig := Item{Kind: "Key", Code: strconv.Itoa(int(vk))}
+		lpKey := longPressKey(trig)
+		// Keys suppressed by WH_KEYBOARD_LL (e.g. F13..F24 mapped to Hold/LongPress)
+		// are never reported as down by GetAsyncKeyState. Do not evict them mid-hold,
+		// otherwise the next OS key-repeat would re-fire HoldDown and leak stuck modifiers.
+		if a.hasActiveHoldLocked(trig) || a.longPress[lpKey] != nil {
+			continue
+		}
 		if !asyncKeyDown(vk) {
-			a.abortLongPressForTriggerLocked(Item{Kind: "Key", Code: strconv.Itoa(int(vk))}, "missed key-up repaired")
-			delete(a.longPress, longPressKey(Item{Kind: "Key", Code: strconv.Itoa(int(vk))}))
+			a.abortLongPressForTriggerLocked(trig, "missed key-up repaired")
+			delete(a.longPress, lpKey)
 			delete(a.keyDown, vk)
+			delete(a.suppressedKeyDown, vk)
 		}
 	}
 	if !asyncKeyDown(VK_LCONTROL) && !asyncKeyDown(VK_RCONTROL) {
@@ -1840,7 +1857,9 @@ func (a *App) reinstallHooksCurrent(reason string) {
 	a.pendingTap = map[string]bool{}
 	a.consumedPrefix = map[string]bool{}
 	a.suppressedDown = map[string]bool{}
+	a.suppressedKeyDown = map[uint32]bool{}
 	a.abortAllLongPressLocked("hooks reinstalled", true)
+	a.releaseActiveHoldsLocked("hooks reinstalled")
 	a.clearJoyConInputStateLocked("hooks reinstalled")
 	a.requestJoyConRescanLocked()
 	if a.recordingMode != "" {
@@ -2093,12 +2112,14 @@ func (a *App) handleKeyEvent(vk uint32, isDown bool) bool {
 	}
 
 	if !isDown {
+		wasSuppressed := a.suppressedKeyDown[vk]
+		delete(a.suppressedKeyDown, vk)
 		holdKey := longPressKey(it)
 		if holdRule, ok := a.activeHoldRules[holdKey]; ok {
 			delete(a.activeHoldRules, holdKey)
 			a.mu.Unlock()
 			a.enqueueRuleGuaranteed(joyConHoldPhaseRule(holdRule, false))
-			return holdRule.SuppressTrigger
+			return holdRule.SuppressTrigger || wasSuppressed
 		}
 		completion := a.finishLongPressLocked(it)
 		a.mu.Unlock()
@@ -2106,18 +2127,20 @@ func (a *App) handleKeyEvent(vk uint32, isDown bool) bool {
 			a.enqueueRuleGuaranteed(completion.Rule)
 		}
 		if completion.Handled {
-			return completion.Suppress
+			return completion.Suppress || wasSuppressed
 		}
-		return false
+		return wasSuppressed
+	}
+
+	holdKey := longPressKey(it)
+	if holdRule, ok := a.activeHoldRules[holdKey]; ok {
+		suppress := holdRule.SuppressTrigger || a.suppressedKeyDown[vk]
+		a.mu.Unlock()
+		return suppress
 	}
 
 	if wasDown {
-		holdKey := longPressKey(it)
-		if holdRule, ok := a.activeHoldRules[holdKey]; ok {
-			a.mu.Unlock()
-			return holdRule.SuppressTrigger
-		}
-		suppress := a.longPressSuppressedLocked(it)
+		suppress := a.longPressSuppressedLocked(it) || a.suppressedKeyDown[vk]
 		a.mu.Unlock()
 		return suppress
 	}
@@ -2134,23 +2157,43 @@ func (a *App) handleKeyEvent(vk uint32, isDown bool) bool {
 		if a.activeHoldRules == nil {
 			a.activeHoldRules = map[string]Rule{}
 		}
-		a.activeHoldRules[longPressKey(it)] = rule
+		a.activeHoldRules[holdKey] = rule
+		if rule.SuppressTrigger {
+			if a.suppressedKeyDown == nil {
+				a.suppressedKeyDown = map[uint32]bool{}
+			}
+			a.suppressedKeyDown[vk] = true
+		}
 		a.mu.Unlock()
 		a.enqueueRuleGuaranteed(joyConHoldPhaseRule(rule, true))
 		return rule.SuppressTrigger
 	}
 	if ok && rule.LongPressEnabled {
 		started := a.startLongPressLocked(rule, it)
+		if started && rule.SuppressTrigger {
+			if a.suppressedKeyDown == nil {
+				a.suppressedKeyDown = map[uint32]bool{}
+			}
+			a.suppressedKeyDown[vk] = true
+		}
 		a.mu.Unlock()
 		return started && rule.SuppressTrigger
 	}
-	a.mu.Unlock()
 	if ok {
 		if a.enqueueRule(rule) {
+			if rule.SuppressTrigger {
+				if a.suppressedKeyDown == nil {
+					a.suppressedKeyDown = map[uint32]bool{}
+				}
+				a.suppressedKeyDown[vk] = true
+			}
+			a.mu.Unlock()
 			return rule.SuppressTrigger
 		}
+		a.mu.Unlock()
 		return false
 	}
+	a.mu.Unlock()
 	return false
 }
 func (a *App) anySpecificModDown(generic uint32) bool {

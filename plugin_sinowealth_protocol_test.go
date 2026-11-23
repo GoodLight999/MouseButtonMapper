@@ -81,12 +81,15 @@ func TestBuildSinoWealthButtonsWritePreservesHeaderAndAppliesPreset(t *testing.T
 	if out[0x06] != 0x06 {
 		t.Fatalf("header byte 0x06 altered: 0x%02x", out[0x06])
 	}
-	// Verify Button 5..8 -> F15, F16, F13, F14
-	wantUsages := map[int]uint8{5: 0x6A, 6: 0x6B, 7: 0x68, 8: 0x69}
+	// Verify Button 5..8 -> F19, F20, F13, F18 (avoiding Windows hidden Win+F14/F15/F16 hotkeys)
+	wantUsages := map[int]uint8{5: 0x6E, 6: 0x6F, 7: 0x68, 8: 0x6D}
 	for idx, want := range wantUsages {
 		off := 0x08 + idx*4
 		if out[off] != 0x21 || out[off+1] != 0x00 || out[off+2] != want || out[off+3] != 0x00 {
 			t.Fatalf("button %d bytes=%02x want 21 00 %02x 00", idx, out[off:off+4], want)
+		}
+		if out[off+2] == 0x6B {
+			t.Fatalf("button %d must never assign F16 (0x6B) which triggers Win+F16 SlideToShutDown", idx)
 		}
 	}
 }

@@ -204,17 +204,23 @@ func (a *App) sendTapOutput(items []Item) {
 func (a *App) sendJoyConHeldKeys(items []Item, down bool) {
 	keys := make([]uint32, 0, len(items))
 	mouseButtons := make([]string, 0, len(items))
+	seenKeys := make(map[uint32]bool)
+	seenMouse := make(map[string]bool)
 	for _, item := range items {
 		if strings.EqualFold(item.Kind, "Key") {
 			if vk, ok := parseVK(item.Code); ok {
 				if isModifier(vk) {
 					vk = normalizeModifier(vk)
 				}
-				keys = append(keys, vk)
+				if !seenKeys[vk] {
+					seenKeys[vk] = true
+					keys = append(keys, vk)
+				}
 			}
 		} else if strings.EqualFold(item.Kind, "Mouse") {
 			code := normMouse(item.Code)
-			if isHoldableMouseOutputCode(code) {
+			if isHoldableMouseOutputCode(code) && !seenMouse[code] {
+				seenMouse[code] = true
 				mouseButtons = append(mouseButtons, code)
 			}
 		}
@@ -232,9 +238,9 @@ func (a *App) sendJoyConHeldKeys(items []Item, down bool) {
 		a.heldMouseRefs = make(map[string]int)
 	}
 	inputs := make([]INPUT, 0, len(keys)+len(mouseButtons))
-	for _, vk := range keys {
-		ref := a.joyConOutputRefs[vk]
-		if down {
+	if down {
+		for _, vk := range keys {
+			ref := a.joyConOutputRefs[vk]
 			if ref.Count == 0 {
 				ref.Owned = !a.physicalKeyDown(vk)
 				if ref.Owned && !a.shuttingDown.Load() {
@@ -243,43 +249,50 @@ func (a *App) sendJoyConHeldKeys(items []Item, down bool) {
 			}
 			ref.Count++
 			a.joyConOutputRefs[vk] = ref
-			continue
 		}
-		if ref.Count == 0 {
-			continue
-		}
-		ref.Count--
-		if ref.Count == 0 {
-			delete(a.joyConOutputRefs, vk)
-			if joyConShouldReleaseOwnedKey(ref, a.physicalKeyDown(vk)) {
-				inputs = append(inputs, makeKeyInput(vk, true))
-			}
-		} else {
-			a.joyConOutputRefs[vk] = ref
-		}
-	}
-	for _, btn := range mouseButtons {
-		cnt := a.heldMouseRefs[btn]
-		if down {
+		for _, btn := range mouseButtons {
+			cnt := a.heldMouseRefs[btn]
 			if cnt == 0 && !a.shuttingDown.Load() {
 				if inp, ok := mouseHoldInput(btn, true); ok {
 					inputs = append(inputs, inp)
 				}
 			}
 			a.heldMouseRefs[btn] = cnt + 1
-			continue
 		}
-		if cnt == 0 {
-			continue
-		}
-		cnt--
-		if cnt == 0 {
-			delete(a.heldMouseRefs, btn)
-			if inp, ok := mouseHoldInput(btn, false); ok {
-				inputs = append(inputs, inp)
+	} else {
+		// Release in reverse order (mouse buttons, then non-modifier keys, then modifiers)
+		// so chords like Win+H release H before Win and avoid stray Start Menu opens.
+		for i := len(mouseButtons) - 1; i >= 0; i-- {
+			btn := mouseButtons[i]
+			cnt := a.heldMouseRefs[btn]
+			if cnt == 0 {
+				continue
 			}
-		} else {
-			a.heldMouseRefs[btn] = cnt
+			cnt--
+			if cnt == 0 {
+				delete(a.heldMouseRefs, btn)
+				if inp, ok := mouseHoldInput(btn, false); ok {
+					inputs = append(inputs, inp)
+				}
+			} else {
+				a.heldMouseRefs[btn] = cnt
+			}
+		}
+		for i := len(keys) - 1; i >= 0; i-- {
+			vk := keys[i]
+			ref := a.joyConOutputRefs[vk]
+			if ref.Count == 0 {
+				continue
+			}
+			ref.Count--
+			if ref.Count == 0 {
+				delete(a.joyConOutputRefs, vk)
+				if joyConShouldReleaseOwnedKey(ref, a.physicalKeyDown(vk)) {
+					inputs = append(inputs, makeKeyInput(vk, true))
+				}
+			} else {
+				a.joyConOutputRefs[vk] = ref
+			}
 		}
 	}
 	a.callSendInput(inputs)

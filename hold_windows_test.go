@@ -23,6 +23,7 @@ func newHoldTestApp(rules []Rule) *App {
 		pendingTap:          map[string]bool{},
 		consumedPrefix:      map[string]bool{},
 		suppressedDown:      map[string]bool{},
+		suppressedKeyDown:   map[uint32]bool{},
 		longPress:           map[string]*longPressState{},
 		joyConOutputRefs:    map[uint32]joyConOutputReference{},
 		actionCh:            make(chan outputJob, 16),
@@ -125,5 +126,84 @@ func TestLogicalRightSideKeyHoldModeAndAutoRepeat(t *testing.T) {
 	}
 	if job := <-a.actionCh; job.Rule.Mode != joyConRuleModeHoldUp {
 		t.Fatalf("got mode=%q want HoldUp", job.Rule.Mode)
+	}
+}
+
+func TestHoldModeSurvivesReconcilePhysicalStateWithoutDoubleFire(t *testing.T) {
+	rule := Rule{
+		Enabled:         true,
+		Input:           []Item{{Kind: "Key", Code: "131"}}, // F20 (DPI-ボタン)
+		Mode:            joyConRuleModeHold,
+		Output:          []Item{{Kind: "Key", Code: "91"}, {Kind: "Key", Code: "72"}}, // Win + H
+		SuppressTrigger: true,
+	}
+	a := newHoldTestApp([]Rule{rule})
+
+	if !a.handleKeyEvent(0x83, true) {
+		t.Fatal("F20 Hold down should suppress trigger")
+	}
+	if job := <-a.actionCh; job.Rule.Mode != joyConRuleModeHoldDown {
+		t.Fatalf("got mode=%q want HoldDown", job.Rule.Mode)
+	}
+
+	// Simulate AutoSwitch calling reconcilePhysicalStateLocked while F20 is suppressed.
+	// GetAsyncKeyState(F20) is 0 because WH_KEYBOARD_LL suppressed it; reconcile must NOT drop keyDown.
+	a.mu.Lock()
+	a.reconcilePhysicalStateLocked()
+	stillDown := a.keyDown[0x83]
+	a.mu.Unlock()
+	if !stillDown {
+		t.Fatal("reconcilePhysicalStateLocked evicted active Hold keyDown")
+	}
+
+	// Even if keyDown were somehow cleared mid-hold, repeated DOWN must stay suppressed and never double-fire HoldDown.
+	a.mu.Lock()
+	delete(a.keyDown, 0x83)
+	a.mu.Unlock()
+	if !a.handleKeyEvent(0x83, true) {
+		t.Fatal("F20 repeat while Hold active must stay suppressed")
+	}
+	select {
+	case extra := <-a.actionCh:
+		t.Fatalf("unexpected duplicate HoldDown after reconcile: %+v", extra.Rule.Mode)
+	default:
+	}
+
+	if !a.handleKeyEvent(0x83, false) {
+		t.Fatal("F20 Hold up should suppress trigger")
+	}
+	if job := <-a.actionCh; job.Rule.Mode != joyConRuleModeHoldUp {
+		t.Fatalf("got mode=%q want HoldUp", job.Rule.Mode)
+	}
+}
+
+func TestTapKeyRuleSuppressesRepeatAndKeyUp(t *testing.T) {
+	rule := Rule{
+		Enabled:         true,
+		Input:           []Item{{Kind: "Key", Code: "130"}}, // F19 (DPI+ボタン)
+		Mode:            "Tap",
+		Output:          []Item{{Kind: "Key", Code: "91"}, {Kind: "Key", Code: "86"}}, // Win + V
+		SuppressTrigger: true,
+	}
+	a := newHoldTestApp([]Rule{rule})
+
+	if !a.handleKeyEvent(0x82, true) {
+		t.Fatal("Tap key down should suppress trigger")
+	}
+	if job := <-a.actionCh; job.Rule.Mode != "Tap" {
+		t.Fatalf("got mode=%q want Tap", job.Rule.Mode)
+	}
+	// Auto-repeat while held must stay suppressed and not re-fire Tap.
+	if !a.handleKeyEvent(0x82, true) {
+		t.Fatal("Tap key auto-repeat must stay suppressed")
+	}
+	select {
+	case extra := <-a.actionCh:
+		t.Fatalf("unexpected duplicate Tap event on repeat: %+v", extra.Rule.Mode)
+	default:
+	}
+	// Matching KEYUP must also be suppressed.
+	if !a.handleKeyEvent(0x82, false) {
+		t.Fatal("Tap key up must stay suppressed")
 	}
 }
