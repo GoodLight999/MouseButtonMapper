@@ -83,10 +83,10 @@ UI改修時は次の設計資料を参照します。
 
 Draft PRと作業ブランチのCIは、同一headから次を生成します。
 
-- `MouseButtonMapper-v8.4.0-rc5.exe`
-- `MouseButtonMapper-v8.4.0-rc5-windows-x64.zip`
-- `MouseButtonMapper-v8.4.0-rc5-source.zip`
-- `MouseButtonMapper-v8.4.0-rc5-SHA256SUMS.txt`
+- `MouseButtonMapper-v8.5.0-rc1.exe`
+- `MouseButtonMapper-v8.5.0-rc1-windows-x64.zip`
+- `MouseButtonMapper-v8.5.0-rc1-source.zip`
+- `MouseButtonMapper-v8.5.0-rc1-SHA256SUMS.txt`
 
 ## ローカル検証
 
@@ -105,7 +105,8 @@ go build -trimpath -ldflags="-s -w -H=windowsgui" -o MouseButtonMapper.exe .
 2. [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 3. [`docs/REGRESSION_CHECKLIST.md`](docs/REGRESSION_CHECKLIST.md)
 4. [`docs/RELEASE.md`](docs/RELEASE.md)
-5. [`CONTRIBUTING.md`](CONTRIBUTING.md)
+5. [`docs/RAY_PAWN_PLUS_GUIDE.md`](docs/RAY_PAWN_PLUS_GUIDE.md)
+6. [`CONTRIBUTING.md`](CONTRIBUTING.md)
 
 ## ライセンス
 
