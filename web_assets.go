@@ -259,6 +259,8 @@ td.priority,th.priority,td.num,th.num{width:54px;text-align:center}
 .statusbox .main{font-weight:700}
 .statusbox .detail{color:var(--muted);font-size:12.5px;margin-top:3px;white-space:pre-wrap}
 
+.subpanel-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.subpanel-head .subpanel-title{margin-bottom:0}
 .rule-actions{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
 .record-buttons{display:flex;gap:8px;flex-wrap:wrap}
 .record{
@@ -379,11 +381,6 @@ td.priority,th.priority,td.num,th.num{width:54px;text-align:center}
           <div class="section-title">マウス・キーボードの割り当て</div>
           <div class="section-help" id="ruleContext">編集するプロファイルの割り当てを表示しています。</div>
         </div>
-        <div class="record-buttons">
-          <button type="button" id="recordInput" class="record">● 入力を記録</button>
-          <button type="button" id="recordOutput" class="record">● 短押し時の実行内容を記録</button>
-          <button type="button" id="stopRecord">記録を中止</button>
-        </div>
       </div>
       <div class="section-body">
         <div class="tablewrap">
@@ -411,11 +408,18 @@ td.priority,th.priority,td.num,th.num{width:54px;text-align:center}
             <button type="button" id="ruleBottom">最下部へ</button>
             <button type="button" id="deleteRule" class="danger">削除</button>
           </div>
-          <span class="help">ヒント: Ray Pawn+ の右サイドをプラグインで F13/F14 にすると、通常キーと衝突せず記録できます。</span>
+          <span class="help">ヒント: Ray Pawn+ の拡張4ボタンをプラグインで F13 / F18 / F19 / F20 にすると、Windows や通常キーと衝突せず記録できます。</span>
         </div>
 
         <div class="subpanel" style="margin-top:14px">
-          <div class="subpanel-title">選択中の割り当てを編集</div>
+          <div class="subpanel-head">
+            <div class="subpanel-title">選択中の割り当てを編集</div>
+            <div class="record-buttons">
+              <button type="button" id="recordInput" class="record">● 入力を記録</button>
+              <button type="button" id="recordOutput" class="record">● 短押し時の実行内容を記録</button>
+              <button type="button" id="stopRecord">記録を中止</button>
+            </div>
+          </div>
           <div id="ruleEmpty" class="muted">上の一覧から編集する割り当てを選択するか、「ルールを追加」を押してください。</div>
           <div id="ruleEditor" class="editor-grid hidden">
             <label class="checkline"><input type="checkbox" id="ruleEnabled"> この割り当てを有効にする</label>
@@ -894,6 +898,8 @@ function fillRuleEditor(){
   const r=state.rules[selectedRule];
   $('ruleEmpty').classList.toggle('hidden',!!r);
   $('ruleEditor').classList.toggle('hidden',!r);
+  $('recordInput').disabled=!r;
+  $('recordOutput').disabled=!r;
   if(!r)return;
   if(!dirtyRule){
     $('ruleEnabled').checked=r.enabled;
@@ -917,6 +923,7 @@ function updateLongPressEditor(){
   const isHold=$('ruleMode').value==='Hold';
   $('longPressBox').classList.toggle('hidden',isHold);
   $('ruleOutputLabel').textContent=isHold?'押している間ずっと押し続ける内容（Hold）':'短押し時の実行内容';
+  $('recordOutput').textContent=isHold?'● 実行内容を記録':'● 短押し時の実行内容を記録';
   $('ruleModeHelp').textContent=isHold?'そのまま長押し連動モード: マウスボタンを押した瞬間にDOWN、離した瞬間にUPを送るため、ゲーム側の短押し・長押しチャージの両方に自然に対応します。':'記録モードは押したキー・ボタンをすべて離した瞬間に自動終了します。';
   if(isHold&&$('ruleLongEnabled').checked)$('ruleLongEnabled').checked=false;
   const enabled=!isHold&&$('ruleLongEnabled').checked;
