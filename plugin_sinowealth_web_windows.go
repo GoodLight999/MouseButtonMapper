@@ -9,11 +9,12 @@ import (
 )
 
 type sinoWealthAPIReq struct {
-	Op      string                   `json:"op"`
-	Preset  string                   `json:"preset,omitempty"`
-	Buttons []SinoWealthButtonAction `json:"buttons,omitempty"`
-	Config  *SinoWealthConfigPatch   `json:"config,omitempty"`
-	Link    *SinoWealthHardwareLink  `json:"link,omitempty"`
+	Op         string                   `json:"op"`
+	Preset     string                   `json:"preset,omitempty"`
+	ColorOrder string                   `json:"colorOrder,omitempty"`
+	Buttons    []SinoWealthButtonAction `json:"buttons,omitempty"`
+	Config     *SinoWealthConfigPatch   `json:"config,omitempty"`
+	Link       *SinoWealthHardwareLink  `json:"link,omitempty"`
 }
 
 func (p *SinoWealthPlugin) buildWebPayload(a *App, device *SinoWealthConfigState) map[string]any {
@@ -55,6 +56,7 @@ func (p *SinoWealthPlugin) buildWebPayload(a *App, device *SinoWealthConfigState
 		"lastSyncMessage":   lastSyncMsg,
 		"editorProfileName": profileName,
 		"profileLink":       profileLink,
+		"colorOrder":        p.colorOrder(a),
 		"hidKeys":           sinoWealthHIDKeys,
 	}
 }
@@ -158,6 +160,27 @@ func (p *SinoWealthPlugin) handleAPI(w http.ResponseWriter, r *http.Request, a *
 		resp["message"] = "初回バックアップからマウス本体の設定とボタンを復元しました。"
 		writeJSON(w, resp)
 
+	case "save-color-order":
+		order := normalizeColorOrder(req.ColorOrder)
+		a.mu.Lock()
+		a.config.Plugins.SinoWealthColorOrder = order
+		err := a.saveConfigLocked()
+		a.mu.Unlock()
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		st, _, err := p.ReadDevice(a)
+		if err != nil {
+			resp := p.buildWebPayload(a, nil)
+			resp["message"] = fmt.Sprintf("LED色順を %s に保存しました。", order)
+			writeJSON(w, resp)
+			return
+		}
+		resp := p.buildWebPayload(a, &st)
+		resp["message"] = fmt.Sprintf("LED色順を %s に変更しました（青が緑に見える場合は RBG を選んで再適用してください）。", order)
+		writeJSON(w, resp)
+
 	case "save-profile-link":
 		if req.Link == nil {
 			writeError(w, fmt.Errorf("連動設定データがありません。"))
@@ -173,6 +196,16 @@ func (p *SinoWealthPlugin) handleAPI(w http.ResponseWriter, r *http.Request, a *
 		if link.ActiveDPISlot < 0 || link.ActiveDPISlot > sinoWealthDPISlots {
 			writeError(w, fmt.Errorf("連動DPIスロットは0(変更しない)〜%dで指定してください。", sinoWealthDPISlots))
 			return
+		}
+		if link.LEDMode < 0 || link.LEDMode > 3 {
+			writeError(w, fmt.Errorf("連動LEDモードが不正です: %d", link.LEDMode))
+			return
+		}
+		if link.LEDMode == 1 {
+			if _, _, _, err := parseHexRGB(link.LEDColor); err != nil {
+				writeError(w, fmt.Errorf("モード連動LED色が不正です: %w", err))
+				return
+			}
 		}
 		a.mu.Lock()
 		if a.editorProfileIndex < 0 || a.editorProfileIndex >= len(a.config.Profiles) {
@@ -193,7 +226,7 @@ func (p *SinoWealthPlugin) handleAPI(w http.ResponseWriter, r *http.Request, a *
 			p.OnEffectiveProfileChanged(a, prof)
 		}
 		resp := p.buildWebPayload(a, nil)
-		resp["message"] = fmt.Sprintf("プロファイル「%s」のマウス本体連動設定を保存しました。", prof.Name)
+		resp["message"] = fmt.Sprintf("プロファイル「%s」のマウス本体連動設定（DPI・レート・色）を保存しました。", prof.Name)
 		resp["state"] = a.buildWebState()
 		writeJSON(w, resp)
 
@@ -452,9 +485,22 @@ function ensureHost(){
         '</div>' +
 
         '<div class="sw-block">' +
-          '<div class="sw-block-head"><div><b>プロファイル自動切替とのハードウェア連動</b><div class="muted" id="swLinkProfileDesc">編集中のプロファイルへ切り替わった際、マウス本体の DPI スロットやポーリングレートを自動で連動させます。</div></div></div>' +
+          '<div class="sw-block-head"><div><b>モード（プロファイル）ごとのマウス色・設定連動</b><div class="muted" id="swLinkProfileDesc">編集中のプロファイルへ切り替わった際、マウスのLED色・DPI・ポーリングレートを自動で切り替えます。</div></div></div>' +
           '<div class="row">' +
             '<label class="checkline"><input type="checkbox" id="swLinkEnabled"> このプロファイル適用時にマウス本体を連動切替する</label>' +
+            '<div class="field"><label for="swLinkLEDMode">モード時のLED</label><select id="swLinkLEDMode"><option value="0">変更しない</option><option value="1">単色点灯（色を指定）</option><option value="2">消灯</option><option value="3">レインボー</option></select></div>' +
+            '<div class="field" id="swLinkColorWrap"><label for="swLinkColor">モードの色</label><div class="row"><input type="color" id="swLinkColor" value="#0000FF"><div class="toolbar" aria-label="色プリセット">' +
+              '<button type="button" class="small" data-sw-swatch="#0000FF">青</button>' +
+              '<button type="button" class="small" data-sw-swatch="#00D8FF">シアン</button>' +
+              '<button type="button" class="small" data-sw-swatch="#00FF44">緑</button>' +
+              '<button type="button" class="small" data-sw-swatch="#FFD000">黄</button>' +
+              '<button type="button" class="small" data-sw-swatch="#FF5500">橙</button>' +
+              '<button type="button" class="small" data-sw-swatch="#FF0022">赤</button>' +
+              '<button type="button" class="small" data-sw-swatch="#AA00FF">紫</button>' +
+              '<button type="button" class="small" data-sw-swatch="#FFFFFF">白</button>' +
+            '</div></div></div>' +
+          '</div>' +
+          '<div class="row" style="margin-top:8px">' +
             '<div class="field"><label for="swLinkRate">連動ポーリングレート</label><select id="swLinkRate"><option value="0">変更しない</option><option value="125">125 Hz</option><option value="250">250 Hz</option><option value="500">500 Hz</option><option value="1000">1000 Hz</option></select></div>' +
             '<div class="field"><label for="swLinkDPI">連動DPIスロット</label><select id="swLinkDPI"><option value="0">変更しない</option><option value="1">スロット #1</option><option value="2">スロット #2</option><option value="3">スロット #3</option><option value="4">スロット #4</option><option value="5">スロット #5</option><option value="6">スロット #6</option><option value="7">スロット #7</option><option value="8">スロット #8</option></select></div>' +
             '<button type="button" id="swSaveLink" data-sw-act="1" class="primary">このプロファイルの連動設定を保存</button>' +
@@ -470,12 +516,14 @@ function ensureHost(){
           '</div>' +
 
           '<div class="sw-block">' +
-            '<div class="sw-block-head"><div><b>センサー・ポーリングレート・DPI 設定</b><div class="muted">変更箇所のみ上書きし、後半 LED テーブルとセンサーIDを自動保護します。</div></div>' +
-            '<button type="button" id="swSaveConfig" data-sw-act="1" class="primary">センサー・DPI設定をマウスへ書き込む</button></div>' +
+            '<div class="sw-block-head"><div><b>センサー・ポーリングレート・DPI・LED 設定</b><div class="muted">変更箇所のみ上書きし、後半 LED テーブルとセンサーIDを自動保護します。</div></div>' +
+            '<button type="button" id="swSaveConfig" data-sw-act="1" class="primary">センサー・DPI・LED設定をマウスへ書き込む</button></div>' +
             '<div class="row" style="margin-bottom:10px">' +
               '<div class="field"><label for="swReportRate">ポーリングレート</label><select id="swReportRate"><option value="125">125 Hz</option><option value="250">250 Hz</option><option value="500">500 Hz</option><option value="1000">1000 Hz</option></select></div>' +
               '<div class="field"><label for="swActiveDPI">アクティブ DPI スロット</label><select id="swActiveDPI"><option value="0">#1</option><option value="1">#2</option><option value="2">#3</option><option value="3">#4</option><option value="4">#5</option><option value="5">#6</option><option value="6">#7</option><option value="7">#8</option></select></div>' +
-              '<div class="field"><label for="swRGBMode">LED エフェクト (下位モード)</label><select id="swRGBMode"><option value="-1">変更しない</option><option value="0">OFF</option><option value="1">Rainbow</option><option value="2">単色点灯</option><option value="3">7色ブリージング</option><option value="4">Tail</option><option value="5">スペクトラム</option><option value="9">Wave</option></select></div>' +
+              '<div class="field"><label for="swRGBMode">LED エフェクト</label><select id="swRGBMode"><option value="-1">変更しない</option><option value="0">OFF (消灯)</option><option value="1">Rainbow</option><option value="2">単色点灯</option><option value="3">7色ブリージング</option><option value="4">Tail</option><option value="5">スペクトラム</option><option value="9">Wave</option></select></div>' +
+              '<div class="field"><label for="swSingleColor">本体LED単色</label><input type="color" id="swSingleColor" value="#0000FF"></div>' +
+              '<div class="field"><label for="swColorOrder">LED色順 (緑⇔青が逆ならRBG)</label><select id="swColorOrder"><option value="RGB">RGB (標準)</option><option value="RBG">RBG (G/B入替)</option></select></div>' +
             '</div>' +
             '<div class="tablewrap"><table><thead><tr><th class="num">#</th><th class="check">有効</th><th>DPI</th><th>色</th><th>状態</th></tr></thead><tbody id="swDPIRows"></tbody></table></div>' +
           '</div>' +
@@ -507,15 +555,23 @@ function ensureHost(){
   });
   $('swSaveConfig').addEventListener('click', () => {
     swDirtyConfig=false;
+    const rgbMode = Number($('swRGBMode').value);
     swFetch('POST', {
       op: 'write-config',
       config: {
         reportRateHz: Number($('swReportRate').value),
         activeDpiIndex: Number($('swActiveDPI').value),
         dpiSlots: swDPIDraft,
-        rgbEffectMode: Number($('swRGBMode').value)
+        rgbEffectMode: rgbMode,
+        singleColor: $('swSingleColor').value,
+        singleBrightness: 4,
+        syncActiveDpiColor: rgbMode === 2,
+        colorOrder: $('swColorOrder').value
       }
     });
+  });
+  $('swColorOrder').addEventListener('change', () => {
+    swFetch('POST', { op: 'save-color-order', colorOrder: $('swColorOrder').value });
   });
   $('swSaveLink').addEventListener('click', () => {
     swDirtyLink=false;
@@ -524,15 +580,31 @@ function ensureHost(){
       link: {
         Enabled: $('swLinkEnabled').checked,
         ReportRateHz: Number($('swLinkRate').value) || 0,
-        ActiveDPISlot: Number($('swLinkDPI').value) || 0
+        ActiveDPISlot: Number($('swLinkDPI').value) || 0,
+        LEDMode: Number($('swLinkLEDMode').value) || 0,
+        LEDColor: $('swLinkColor').value || '#0000FF'
       }
     });
   });
-  ['swReportRate','swActiveDPI','swRGBMode'].forEach(id => {
-    $(id).addEventListener('change', () => { swDirtyConfig = true; if(id==='swActiveDPI') renderDPITable(swData && swData.device); });
+  host.querySelectorAll('button[data-sw-swatch]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      $('swLinkEnabled').checked = true;
+      $('swLinkLEDMode').value = '1';
+      $('swLinkColor').value = btn.dataset.swSwatch;
+      $('swLinkColorWrap').classList.remove('hidden');
+      swDirtyLink = true;
+    });
   });
-  ['swLinkEnabled','swLinkRate','swLinkDPI'].forEach(id => {
-    $(id).addEventListener('change', () => { swDirtyLink = true; });
+  ['swReportRate','swActiveDPI','swRGBMode','swSingleColor'].forEach(id => {
+    $(id).addEventListener('change', () => { swDirtyConfig = true; if(id==='swActiveDPI') renderDPITable(swData && swData.device); });
+    $(id).addEventListener('input', () => { swDirtyConfig = true; });
+  });
+  ['swLinkEnabled','swLinkRate','swLinkDPI','swLinkLEDMode','swLinkColor'].forEach(id => {
+    $(id).addEventListener('change', () => {
+      swDirtyLink = true;
+      $('swLinkColorWrap').classList.toggle('hidden', $('swLinkLEDMode').value !== '1');
+    });
+    $(id).addEventListener('input', () => { swDirtyLink = true; });
   });
   return host;
 }
@@ -560,19 +632,24 @@ function render(){
     swLastProfileName = swData.editorProfileName || '';
     swDirtyLink = false;
   }
-  $('swLinkProfileDesc').textContent = '編集対象プロファイル「' + (swData.editorProfileName || '―') + '」が有効になったとき、マウス本体の設定を自動連動させます。';
+  $('swLinkProfileDesc').textContent = '編集対象プロファイル「' + (swData.editorProfileName || '―') + '」へ切り替わったとき、マウスのLED色・DPI・ポーリングレートを自動で切り替えます。';
   if(!swDirtyLink){
     const lk = swData.profileLink || {};
     $('swLinkEnabled').checked = !!lk.Enabled;
     $('swLinkRate').value = String(lk.ReportRateHz || 0);
     $('swLinkDPI').value = String(lk.ActiveDPISlot || 0);
+    $('swLinkLEDMode').value = String(lk.LEDMode || 0);
+    $('swLinkColor').value = (lk.LEDColor && /^#[0-9a-fA-F]{6}$/.test(lk.LEDColor)) ? lk.LEDColor : '#0000FF';
+    $('swLinkColorWrap').classList.toggle('hidden', $('swLinkLEDMode').value !== '1');
   }
   $('swSyncStatus').textContent = swData.lastSyncMessage || '';
+  $('swColorOrder').value = swData.colorOrder || 'RGB';
 
   if(!swDirtyConfig){
     $('swReportRate').value = String(dev.reportRateHz || 500);
     $('swActiveDPI').value = String(dev.activeDpiIndex || 0);
-    $('swRGBMode').value = '-1';
+    $('swRGBMode').value = String(dev.rgbEffectMode != null ? dev.rgbEffectMode : -1);
+    $('swSingleColor').value = (dev.singleColor && /^#[0-9a-fA-F]{6}$/.test(dev.singleColor)) ? dev.singleColor : '#0000FF';
     swDPIDraft = (dev.dpiSlots || []).map(s => Object.assign({}, s));
     renderDPITable(dev);
   }

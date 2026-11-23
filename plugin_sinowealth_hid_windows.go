@@ -160,7 +160,7 @@ func (p *SinoWealthPlugin) OnEffectiveProfileChanged(a *App, profile Profile) {
 	if !profile.SinoWealth.Enabled {
 		return
 	}
-	if profile.SinoWealth.ReportRateHz == 0 && profile.SinoWealth.ActiveDPISlot == 0 {
+	if profile.SinoWealth.ReportRateHz == 0 && profile.SinoWealth.ActiveDPISlot == 0 && profile.SinoWealth.LEDMode == 0 {
 		return
 	}
 	// Non-blocking replace of pending job so hook/autoswitch threads never stall.
@@ -190,23 +190,33 @@ func (p *SinoWealthPlugin) syncWorker() {
 	}
 }
 
+func (p *SinoWealthPlugin) colorOrder(a *App) string {
+	if a == nil {
+		return "RGB"
+	}
+	a.mu.RLock()
+	order := a.config.Plugins.SinoWealthColorOrder
+	a.mu.RUnlock()
+	return normalizeColorOrder(order)
+}
+
 func (p *SinoWealthPlugin) applyProfileHardwareLink(a *App, profile Profile) {
 	if a != nil && !a.isPluginEnabled(p.ID(), p.DefaultEnabled()) {
 		return
 	}
 	link := profile.SinoWealth
-	if !link.Enabled || (link.ReportRateHz == 0 && link.ActiveDPISlot == 0) {
+	if !link.Enabled || (link.ReportRateHz == 0 && link.ActiveDPISlot == 0 && link.LEDMode == 0) {
 		return
 	}
 	// Rate-limit Flash writes to avoid wear and USB stutter during rapid Alt+Tab.
 	p.stateMu.RLock()
 	since := time.Since(p.lastSyncAt)
 	p.stateMu.RUnlock()
-	if since < 1200*time.Millisecond {
+	if since < 900*time.Millisecond {
 		select {
 		case <-p.stopCh:
 			return
-		case <-time.After(1200*time.Millisecond - since):
+		case <-time.After(900*time.Millisecond - since):
 		}
 	}
 
@@ -216,9 +226,11 @@ func (p *SinoWealthPlugin) applyProfileHardwareLink(a *App, profile Profile) {
 		return
 	}
 
+	order := p.colorOrder(a)
 	patch := SinoWealthConfigPatch{
 		ActiveDPIIndex: -1,
 		RGBEffectMode:  -1,
+		ColorOrder:     order,
 	}
 	needWrite := false
 	if link.ReportRateHz > 0 && link.ReportRateHz != st.ReportRateHz {
@@ -232,8 +244,37 @@ func (p *SinoWealthPlugin) applyProfileHardwareLink(a *App, profile Profile) {
 			needWrite = true
 		}
 	}
+	switch link.LEDMode {
+	case 1: // Single solid color
+		wantColor := strings.ToUpper(strings.TrimSpace(link.LEDColor))
+		if wantColor == "" {
+			wantColor = "#0000FF"
+		}
+		curActiveColor := ""
+		if st.ActiveDPIIndex >= 0 && st.ActiveDPIIndex < len(st.DPISlots) {
+			curActiveColor = strings.ToUpper(st.DPISlots[st.ActiveDPIIndex].Color)
+		}
+		if st.RGBEffectMode != 2 || !strings.EqualFold(st.SingleColor, wantColor) || !strings.EqualFold(curActiveColor, wantColor) {
+			patch.RGBEffectMode = 2
+			patch.SingleColor = wantColor
+			patch.SingleBrightness = 4
+			patch.SyncActiveDPIColor = true
+			needWrite = true
+		}
+	case 2: // LED OFF
+		if st.RGBEffectMode != 0 {
+			patch.RGBEffectMode = 0
+			needWrite = true
+		}
+	case 3: // Rainbow
+		if st.RGBEffectMode != 1 {
+			patch.RGBEffectMode = 1
+			needWrite = true
+		}
+	}
+
 	if !needWrite {
-		p.setSyncStatus(fmt.Sprintf("プロファイル「%s」のマウス設定はすでに一致しています (%dHz / DPI #%d)", profile.Name, st.ReportRateHz, st.ActiveDPIIndex+1))
+		p.setSyncStatus(fmt.Sprintf("プロファイル「%s」のマウス設定はすでに一致しています (%dHz / DPI #%d / LED %s)", profile.Name, st.ReportRateHz, st.ActiveDPIIndex+1, st.SingleColor))
 		return
 	}
 
@@ -245,9 +286,9 @@ func (p *SinoWealthPlugin) applyProfileHardwareLink(a *App, profile Profile) {
 		}
 		return
 	}
-	p.setSyncStatus(fmt.Sprintf("プロファイル「%s」へ連動適用: %dHz / DPI #%d (%d DPI)", profile.Name, updated.ReportRateHz, updated.ActiveDPIIndex+1, updated.DPISlots[updated.ActiveDPIIndex].DPI))
+	p.setSyncStatus(fmt.Sprintf("プロファイル「%s」へ連動適用: %dHz / DPI #%d (%d DPI) / LED mode=%d %s", profile.Name, updated.ReportRateHz, updated.ActiveDPIIndex+1, updated.DPISlots[updated.ActiveDPIIndex].DPI, updated.RGBEffectMode, updated.SingleColor))
 	if a != nil {
-		a.logf("sinowealth profile synced: profile=%q rate=%dHz dpiSlot=%d", profile.Name, updated.ReportRateHz, updated.ActiveDPIIndex+1)
+		a.logf("sinowealth profile synced: profile=%q rate=%dHz dpiSlot=%d ledMode=%d color=%s", profile.Name, updated.ReportRateHz, updated.ActiveDPIIndex+1, updated.RGBEffectMode, updated.SingleColor)
 	}
 }
 
@@ -540,7 +581,7 @@ func (p *SinoWealthPlugin) readLocked(a *App) (SinoWealthConfigState, []byte, []
 		displayName = "Ray Pawn+ (RM-3360LR)"
 	}
 
-	st, err := decodeSinoWealthState(paths.VID, paths.PID, fw, displayName, activeProfile, cfgBuf, btnBuf)
+	st, err := decodeSinoWealthState(paths.VID, paths.PID, fw, displayName, activeProfile, cfgBuf, btnBuf, p.colorOrder(a))
 	if err != nil {
 		return SinoWealthConfigState{}, nil, nil, err
 	}
@@ -619,6 +660,9 @@ func (p *SinoWealthPlugin) WriteConfigPatch(a *App, patch SinoWealthConfigPatch)
 	_, origCfg, _, err := p.readLocked(a)
 	if err != nil {
 		return SinoWealthConfigState{}, err
+	}
+	if patch.ColorOrder == "" {
+		patch.ColorOrder = p.colorOrder(a)
 	}
 	writeBuf, err := buildSinoWealthConfigWriteReport(origCfg, patch)
 	if err != nil {

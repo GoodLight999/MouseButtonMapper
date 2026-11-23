@@ -123,3 +123,49 @@ func TestBuildSinoWealthConfigWritePreservesTailAndHighNibble(t *testing.T) {
 		}
 	}
 }
+
+func TestSingleDPIBlueAndRBGColorOrder(t *testing.T) {
+	origCfg, origBtn := mustRealPawnPlusDumps(t)
+	slots := make([]SinoWealthDPISlot, sinoWealthDPISlots)
+	slots[0] = SinoWealthDPISlot{Index: 0, Enabled: true, DPI: 1600, Color: "#0000FF"}
+	out, err := buildSinoWealthConfigWriteReport(origCfg, SinoWealthConfigPatch{
+		ReportRateHz:       1000,
+		ActiveDPIIndex:     0,
+		DPISlots:           slots,
+		RGBEffectMode:      2,
+		SingleColor:        "#0000FF",
+		SingleBrightness:   4,
+		SyncActiveDPIColor: true,
+		ColorOrder:         "RGB",
+	})
+	if err != nil {
+		t.Fatalf("build single DPI blue: %v", err)
+	}
+	if out[0x0B] != 0x11 || out[0x0C] != 0xFE {
+		t.Fatalf("expected 1 active DPI slot (0x11 / 0xFE), got 0x%02x / 0x%02x", out[0x0B], out[0x0C])
+	}
+	if out[0x0D] != 0x0F { // (1600/100)-1 = 15
+		t.Fatalf("slot 0 raw dpi=0x%02x want 0x0F (1600)", out[0x0D])
+	}
+	if out[0x35] != 0x22 || out[0x38] != 0x40 || out[0x39] != 0x00 || out[0x3A] != 0x00 || out[0x3B] != 0xFF {
+		t.Fatalf("unexpected single LED bytes: mode=0x%02x bright=0x%02x rgb=%02x%02x%02x", out[0x35], out[0x38], out[0x39], out[0x3A], out[0x3B])
+	}
+	// Verify RBG swaps G and B
+	outRBG, err := buildSinoWealthConfigWriteReport(origCfg, SinoWealthConfigPatch{
+		ActiveDPIIndex:     -1,
+		RGBEffectMode:      2,
+		SingleColor:        "#0000FF",
+		SyncActiveDPIColor: true,
+		ColorOrder:         "RBG",
+	})
+	if err != nil {
+		t.Fatalf("build RBG: %v", err)
+	}
+	if outRBG[0x39] != 0x00 || outRBG[0x3A] != 0xFF || outRBG[0x3B] != 0x00 {
+		t.Fatalf("expected RBG swap 00 FF 00 for blue, got %02x %02x %02x", outRBG[0x39], outRBG[0x3A], outRBG[0x3B])
+	}
+	st, err := decodeSinoWealthState(0x258A, 0x1007, "GM07", "Ray Pawn+", 1, outRBG, origBtn, "RBG")
+	if err != nil || st.SingleColor != "#0000FF" {
+		t.Fatalf("RBG roundtrip failed: err=%v color=%q", err, st.SingleColor)
+	}
+}

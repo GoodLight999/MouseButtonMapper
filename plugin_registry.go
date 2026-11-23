@@ -7,7 +7,8 @@ import (
 
 // PluginsConfig stores opt-in plugin states inside config.json (backward compatible optional field).
 type PluginsConfig struct {
-	Enabled map[string]bool `json:"Enabled,omitempty"`
+	Enabled              map[string]bool `json:"Enabled,omitempty"`
+	SinoWealthColorOrder string          `json:"SinoWealthColorOrder,omitempty"` // "RGB" (default) or "RBG"
 }
 
 func (c PluginsConfig) IsEnabled(id string, defaultEnabled bool) bool {

@@ -54,33 +54,37 @@ type SinoWealthDPISlot struct {
 }
 
 type SinoWealthConfigState struct {
-	VendorID       uint16                   `json:"vendorId"`
-	ProductID      uint16                   `json:"productId"`
-	Firmware       string                   `json:"firmware"`
-	ProductName    string                   `json:"productName"`
-	SensorType     uint8                    `json:"sensorType"`
-	SensorName     string                   `json:"sensorName"`
-	MaxDPI         int                      `json:"maxDpi"`
-	ActiveProfile  int                      `json:"activeProfile"`
-	ReportRateHz   int                      `json:"reportRateHz"`
-	ActiveDPISlot  int                      `json:"activeDpiSlot"`  // 1-based among enabled slots (or slot index+1)
-	ActiveDPIIndex int                      `json:"activeDpiIndex"` // 0-based physical slot index
-	XYIndependent  bool                     `json:"xyIndependent"`
-	DPISlots       []SinoWealthDPISlot      `json:"dpiSlots"`
-	ButtonCount    int                      `json:"buttonCount"`
-	Buttons        []SinoWealthButtonAction `json:"buttons"`
-	RGBEffectRaw   uint8                    `json:"rgbEffectRaw"`
-	RGBEffectMode  uint8                    `json:"rgbEffectMode"`
-	RawConfigHex   string                   `json:"rawConfigHex,omitempty"`
-	RawButtonsHex  string                   `json:"rawButtonsHex,omitempty"`
+	VendorID         uint16                   `json:"vendorId"`
+	ProductID        uint16                   `json:"productId"`
+	Firmware         string                   `json:"firmware"`
+	ProductName      string                   `json:"productName"`
+	SensorType       uint8                    `json:"sensorType"`
+	SensorName       string                   `json:"sensorName"`
+	MaxDPI           int                      `json:"maxDpi"`
+	ActiveProfile    int                      `json:"activeProfile"`
+	ReportRateHz     int                      `json:"reportRateHz"`
+	ActiveDPISlot    int                      `json:"activeDpiSlot"`  // 1-based among enabled slots (or slot index+1)
+	ActiveDPIIndex   int                      `json:"activeDpiIndex"` // 0-based physical slot index
+	XYIndependent    bool                     `json:"xyIndependent"`
+	DPISlots         []SinoWealthDPISlot      `json:"dpiSlots"`
+	ButtonCount      int                      `json:"buttonCount"`
+	Buttons          []SinoWealthButtonAction `json:"buttons"`
+	RGBEffectRaw     uint8                    `json:"rgbEffectRaw"`
+	RGBEffectMode    uint8                    `json:"rgbEffectMode"`
+	SingleColor      string                   `json:"singleColor"`
+	SingleBrightness int                      `json:"singleBrightness"`
+	ColorOrder       string                   `json:"colorOrder"`
+	RawConfigHex     string                   `json:"rawConfigHex,omitempty"`
+	RawButtonsHex    string                   `json:"rawButtonsHex,omitempty"`
 }
 
 // SinoWealthHardwareLink configures optional per-profile hardware sync.
 type SinoWealthHardwareLink struct {
-	Enabled        bool `json:"Enabled,omitempty"`
-	ReportRateHz   int  `json:"ReportRateHz,omitempty"`   // 0=unchanged, 125/250/500/1000
-	ActiveDPIIndex int  `json:"ActiveDPIIndex,omitempty"` // -1 or 0-based; we use 1-based ActiveDPISlot (0=unchanged, 1..8)
-	ActiveDPISlot  int  `json:"ActiveDPISlot,omitempty"`  // 0=unchanged, 1..8 (1-based physical slot index)
+	Enabled       bool   `json:"Enabled,omitempty"`
+	ReportRateHz  int    `json:"ReportRateHz,omitempty"`  // 0=unchanged, 125/250/500/1000
+	ActiveDPISlot int    `json:"ActiveDPISlot,omitempty"` // 0=unchanged, 1..8 (1-based physical slot index)
+	LEDMode       int    `json:"LEDMode,omitempty"`       // 0=unchanged, 1=single color, 2=off, 3=rainbow
+	LEDColor      string `json:"LEDColor,omitempty"`      // #RRGGBB when LEDMode==1
 }
 
 type SinoWealthHIDKeyOption struct {
@@ -525,7 +529,32 @@ func encodeSinoWealthButton(act SinoWealthButtonAction) ([4]byte, error) {
 	}
 }
 
-func decodeSinoWealthState(vid, pid uint16, fw, productName string, activeProfile int, cfgBuf, btnBuf []byte) (SinoWealthConfigState, error) {
+func encodeRGBOrder(r, g, b uint8, order string) (uint8, uint8, uint8) {
+	if strings.EqualFold(strings.TrimSpace(order), "RBG") {
+		return r, b, g
+	}
+	return r, g, b
+}
+
+func decodeRGBOrder(b0, b1, b2 uint8, order string) (uint8, uint8, uint8) {
+	if strings.EqualFold(strings.TrimSpace(order), "RBG") {
+		return b0, b2, b1
+	}
+	return b0, b1, b2
+}
+
+func normalizeColorOrder(order string) string {
+	if strings.EqualFold(strings.TrimSpace(order), "RBG") {
+		return "RBG"
+	}
+	return "RGB"
+}
+
+func decodeSinoWealthState(vid, pid uint16, fw, productName string, activeProfile int, cfgBuf, btnBuf []byte, colorOrder ...string) (SinoWealthConfigState, error) {
+	order := "RGB"
+	if len(colorOrder) > 0 {
+		order = normalizeColorOrder(colorOrder[0])
+	}
 	if len(cfgBuf) != sinoWealthReportLen {
 		return SinoWealthConfigState{}, fmt.Errorf("設定レポート長が不正です: %d (期待値 %d)", len(cfgBuf), sinoWealthReportLen)
 	}
@@ -562,11 +591,12 @@ func decodeSinoWealthState(vid, pid uint16, fw, productName string, activeProfil
 		if !enabled && rawDPI == 0 {
 			dpiVal = 0
 		}
+		cr, cg, cb := decodeRGBOrder(cfgBuf[cOff], cfgBuf[cOff+1], cfgBuf[cOff+2], order)
 		dpiSlots[i] = SinoWealthDPISlot{
 			Index:   i,
 			Enabled: enabled,
 			DPI:     dpiVal,
-			Color:   fmt.Sprintf("#%02X%02X%02X", cfgBuf[cOff], cfgBuf[cOff+1], cfgBuf[cOff+2]),
+			Color:   fmt.Sprintf("#%02X%02X%02X", cr, cg, cb),
 		}
 		if enabled {
 			enabledOrd++
@@ -595,26 +625,35 @@ func decodeSinoWealthState(vid, pid uint16, fw, productName string, activeProfil
 		buttons[i] = decodeSinoWealthButton(i, raw)
 	}
 
+	sr, sg, sb := decodeRGBOrder(cfgBuf[0x39], cfgBuf[0x3A], cfgBuf[0x3B], order)
+	singleBrightness := int((cfgBuf[0x38] >> 4) & 0x0F)
+	if singleBrightness == 0 {
+		singleBrightness = 4
+	}
+
 	return SinoWealthConfigState{
-		VendorID:       vid,
-		ProductID:      pid,
-		Firmware:       fw,
-		ProductName:    productName,
-		SensorType:     sensor,
-		SensorName:     sensorName,
-		MaxDPI:         maxDPI,
-		ActiveProfile:  activeProfile,
-		ReportRateHz:   rateHz,
-		ActiveDPISlot:  activeDPIOrdinal,
-		ActiveDPIIndex: activePhysicalIdx,
-		XYIndependent:  xyIndep,
-		DPISlots:       dpiSlots,
-		ButtonCount:    buttonCount,
-		Buttons:        buttons,
-		RGBEffectRaw:   cfgBuf[0x35],
-		RGBEffectMode:  cfgBuf[0x35] & 0x0F,
-		RawConfigHex:   hex.EncodeToString(cfgBuf[:sinoWealthConfigLen]),
-		RawButtonsHex:  hex.EncodeToString(btnBuf[:sinoWealthButtonsLen]),
+		VendorID:         vid,
+		ProductID:        pid,
+		Firmware:         fw,
+		ProductName:      productName,
+		SensorType:       sensor,
+		SensorName:       sensorName,
+		MaxDPI:           maxDPI,
+		ActiveProfile:    activeProfile,
+		ReportRateHz:     rateHz,
+		ActiveDPISlot:    activeDPIOrdinal,
+		ActiveDPIIndex:   activePhysicalIdx,
+		XYIndependent:    xyIndep,
+		DPISlots:         dpiSlots,
+		ButtonCount:      buttonCount,
+		Buttons:          buttons,
+		RGBEffectRaw:     cfgBuf[0x35],
+		RGBEffectMode:    cfgBuf[0x35] & 0x0F,
+		SingleColor:      fmt.Sprintf("#%02X%02X%02X", sr, sg, sb),
+		SingleBrightness: singleBrightness,
+		ColorOrder:       order,
+		RawConfigHex:     hex.EncodeToString(cfgBuf[:sinoWealthConfigLen]),
+		RawButtonsHex:    hex.EncodeToString(btnBuf[:sinoWealthButtonsLen]),
 	}, nil
 }
 
@@ -645,10 +684,14 @@ func buildSinoWealthButtonsWriteReport(origBtnBuf []byte, updates []SinoWealthBu
 }
 
 type SinoWealthConfigPatch struct {
-	ReportRateHz   int                 `json:"reportRateHz,omitempty"` // 0=unchanged
-	ActiveDPIIndex int                 `json:"activeDpiIndex"`         // -1=unchanged, 0..7=physical slot index
-	DPISlots       []SinoWealthDPISlot `json:"dpiSlots,omitempty"`     // nil=unchanged
-	RGBEffectMode  int                 `json:"rgbEffectMode"`          // -1=unchanged, 0..10 (preserves high nibble!)
+	ReportRateHz       int                 `json:"reportRateHz,omitempty"`       // 0=unchanged
+	ActiveDPIIndex     int                 `json:"activeDpiIndex"`               // -1=unchanged, 0..7=physical slot index
+	DPISlots           []SinoWealthDPISlot `json:"dpiSlots,omitempty"`           // nil=unchanged
+	RGBEffectMode      int                 `json:"rgbEffectMode"`                // -1=unchanged, 0..10 (preserves high nibble!)
+	SingleColor        string              `json:"singleColor,omitempty"`        // "#RRGGBB" for body single-color LED (0x39..0x3B)
+	SingleBrightness   int                 `json:"singleBrightness,omitempty"`   // 0=unchanged(or 4), 1..4
+	SyncActiveDPIColor bool                `json:"syncActiveDpiColor,omitempty"` // also paint active DPI slot indicator with SingleColor
+	ColorOrder         string              `json:"colorOrder,omitempty"`         // "RGB" (default) or "RBG"
 }
 
 // buildSinoWealthConfigWriteReport performs safe Read-Modify-Write on an existing 520-byte CONFIG report.
@@ -665,6 +708,7 @@ func buildSinoWealthConfigWriteReport(origCfgBuf []byte, patch SinoWealthConfigP
 		return nil, errors.New("センサー種別が0のため安全のため書き込みを中止しました")
 	}
 
+	order := normalizeColorOrder(patch.ColorOrder)
 	out := make([]byte, sinoWealthReportLen)
 	copy(out, origCfgBuf)
 	out[0x03] = sinoWealthConfigWrite
@@ -711,10 +755,11 @@ func buildSinoWealthConfigWriteReport(origCfgBuf []byte, patch SinoWealthConfigP
 				if err != nil {
 					return nil, fmt.Errorf("DPIスロット %d の色指定が不正です: %w", i+1, err)
 				}
+				c0, c1, c2 := encodeRGBOrder(r, g, b, order)
 				cOff := 0x1D + i*3
-				out[cOff] = r
-				out[cOff+1] = g
-				out[cOff+2] = b
+				out[cOff] = c0
+				out[cOff+1] = c1
+				out[cOff+2] = c2
 			}
 		}
 		if enabledCount == 0 {
@@ -756,6 +801,45 @@ func buildSinoWealthConfigWriteReport(origCfgBuf []byte, patch SinoWealthConfigP
 		}
 		// Preserve upper nibble (device-specific flags, e.g. 0x20 on GM07)
 		out[0x35] = (out[0x35] & 0xF0) | uint8(patch.RGBEffectMode&0x0F)
+	}
+
+	if strings.TrimSpace(patch.SingleColor) != "" {
+		r, g, b, err := parseHexRGB(patch.SingleColor)
+		if err != nil {
+			return nil, fmt.Errorf("本体LED色指定が不正です: %w", err)
+		}
+		c0, c1, c2 := encodeRGBOrder(r, g, b, order)
+		bright := patch.SingleBrightness
+		if bright <= 0 {
+			bright = int((out[0x38] >> 4) & 0x0F)
+		}
+		if bright < 1 || bright > 4 {
+			bright = 4
+		}
+		out[0x38] = uint8(bright << 4)
+		out[0x39] = c0
+		out[0x3A] = c1
+		out[0x3B] = c2
+
+		if patch.SyncActiveDPIColor {
+			disabledMask := out[0x0C]
+			activeOrd := int((out[0x0B] >> 4) & 0x0F)
+			enabledOrd := 0
+			activeIdx := 0
+			for i := 0; i < sinoWealthDPISlots; i++ {
+				if (disabledMask & (1 << uint(i))) == 0 {
+					enabledOrd++
+					if enabledOrd == activeOrd {
+						activeIdx = i
+						break
+					}
+				}
+			}
+			cOff := 0x1D + activeIdx*3
+			out[cOff] = c0
+			out[cOff+1] = c1
+			out[cOff+2] = c2
+		}
 	}
 
 	return out, nil
