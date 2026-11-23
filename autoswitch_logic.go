@@ -34,6 +34,7 @@ type ForegroundAppInfo struct {
 	Path        string
 	Title       string
 	Source      string
+	Elevated    bool
 	SeenAt      time.Time
 }
 
@@ -172,4 +173,18 @@ func foregroundMatchTarget(observed, lastExternal ForegroundAppInfo, settingsWin
 		return observed, false
 	}
 	return ForegroundAppInfo{}, false
+}
+
+// isExactSettingsWindowTitle distinguishes MouseButtonMapper's own Edge/WebView
+// window from unrelated browser tabs or editors that merely mention the app name
+// (such as a GitHub repo tab or IDE window).
+func isExactSettingsWindowTitle(title string) bool {
+	t := strings.ToLower(strings.TrimSpace(title))
+	if t == "" {
+		return false
+	}
+	return t == "mousebuttonmapper" ||
+		t == "mousebuttonmapper 設定" ||
+		t == "mousebuttonmapper - settings" ||
+		strings.HasPrefix(t, "mousebuttonmapper - ") && (strings.Contains(t, "127.0.0.1") || strings.Contains(t, "設定"))
 }

@@ -545,12 +545,14 @@ type Config struct {
 	Profiles        []Profile               `json:"Profiles"`
 	AutoSwitch      AutoSwitchConfig        `json:"AutoSwitch,omitempty"`
 	Controller      ControllerFeatureConfig `json:"Controller,omitempty"`
+	Plugins         PluginsConfig           `json:"Plugins,omitempty"`
 }
 type Profile struct {
-	Id     string              `json:"Id"`
-	Name   string              `json:"Name"`
-	Rules  []Rule              `json:"Rules"`
-	JoyCon JoyConProfileConfig `json:"JoyCon,omitempty"`
+	Id         string                 `json:"Id"`
+	Name       string                 `json:"Name"`
+	Rules      []Rule                 `json:"Rules"`
+	JoyCon     JoyConProfileConfig    `json:"JoyCon,omitempty"`
+	SinoWealth SinoWealthHardwareLink `json:"SinoWealth,omitempty"`
 }
 type Rule struct {
 	Enabled          bool   `json:"Enabled"`
@@ -614,6 +616,9 @@ type App struct {
 	xInputCancel             func()
 	xInputDone               chan struct{}
 	xInputStatus             XInputConnectionStatus
+
+	plugins               *pluginRegistry
+	lastNotifiedProfileID string
 
 	sendMu                  sync.Mutex
 	hookMu                  sync.RWMutex
@@ -745,6 +750,7 @@ func main() {
 	defer pCoUninitialize.Call()
 	parseArgs()
 	app.initPaths()
+	app.plugins = newPluginRegistry(newSinoWealthPlugin())
 	pid, _, _ := pGetCurrentProcessId.Call()
 	app.currentPID = uint32(pid)
 	if app.startedSafe {
@@ -1028,12 +1034,14 @@ func readForegroundAppFromHWND(hwnd uintptr, previous ForegroundAppInfo, source 
 	if previous.PID == pid && previous.Path != "" {
 		info.Path = previous.Path
 		info.ProcessName = previous.ProcessName
+		info.Elevated = previous.Elevated
 	} else {
 		info.Path = processImagePath(pid)
 		info.ProcessName = baseNameAnySeparator(info.Path)
 		if info.ProcessName == "" {
 			info.ProcessName = processNameFromSnapshot(pid)
 		}
+		info.Elevated = isProcessElevated(pid)
 	}
 	return info
 }
@@ -1046,7 +1054,7 @@ func (a *App) isSettingsWindowLocked(info ForegroundAppInfo) bool {
 	if info.PID != 0 && info.PID == a.currentPID {
 		return true
 	}
-	return strings.Contains(strings.ToLower(info.Title), strings.ToLower(appName))
+	return isExactSettingsWindowTitle(info.Title)
 }
 
 func pumpThreadMessages() {
@@ -1264,7 +1272,7 @@ func (a *App) evaluateForegroundApp(observed ForegroundAppInfo) {
 		a.updateAutoDecisionLocked("match:"+candidateKey, "一致: "+binding.Name, detail, now)
 	} else {
 		detail := contextDetail + fmt.Sprintf("%s に一致する有効な自動切替ルールはありません。", matchInfo.ProcessName)
-		a.updateAutoDecisionLocked("nomatch:"+strings.ToLower(matchInfo.ProcessName)+"|"+matchInfo.Title, "一致なし: 通常時プロファイルを使用", detail, now)
+		a.updateAutoDecisionLocked("nomatch:"+strings.ToLower(matchInfo.ProcessName), "一致なし: 通常時プロファイルを使用", detail, now)
 	}
 
 	debounce := time.Duration(a.config.AutoSwitch.DebounceMs) * time.Millisecond
@@ -1685,6 +1693,10 @@ func (a *App) rebuildRulesLockedWithJoyConRescan(rescanJoyCon bool) {
 	if rescanJoyCon {
 		a.requestJoyConRescanLocked()
 	}
+	if a.plugins != nil && prof.Id != a.lastNotifiedProfileID {
+		a.lastNotifiedProfileID = prof.Id
+		a.plugins.NotifyEffectiveProfile(a, prof)
+	}
 }
 
 func (a *App) activeProfileNameLocked() string {
@@ -1949,6 +1961,9 @@ func (a *App) messageLoop() {
 	}
 }
 func (a *App) cleanup() {
+	if a.plugins != nil {
+		a.plugins.ShutdownAll()
+	}
 	a.stopXInputSubsystem()
 	a.stopJoyConSubsystem()
 	// タイマーやUI処理が終了処理と競合しても、終了開始後に新しい入力を
@@ -4515,6 +4530,7 @@ type webForegroundApp struct {
 	Path        string `json:"path"`
 	Title       string `json:"title"`
 	Source      string `json:"source"`
+	Elevated    bool   `json:"elevated"`
 	SeenAt      string `json:"seenAt"`
 }
 
@@ -4568,6 +4584,7 @@ type webState struct {
 	LastInput            string           `json:"lastInput"`
 	LastInputAt          string           `json:"lastInputAt"`
 	HookStatus           string           `json:"hookStatus"`
+	SelfElevated         bool             `json:"selfElevated"`
 }
 
 func (a *App) startWebServer() error {
@@ -4578,11 +4595,16 @@ func (a *App) startWebServer() error {
 	mux.HandleFunc("/api/rule", a.webAPIRule)
 	mux.HandleFunc("/api/profile", a.webAPIProfile)
 	mux.HandleFunc("/api/autoswitch", a.webAPIAutoSwitch)
+	mux.HandleFunc("/api/running-apps", a.webAPIRunningApps)
+	mux.HandleFunc("/api/plugins", a.webAPIPlugins)
 	mux.HandleFunc("/api/controller", a.webAPIControllerFeature)
 	mux.HandleFunc("/api/joycon", a.webAPIJoyCon)
 	mux.HandleFunc("/joycon-ui.js", a.webJoyConUIJS)
 	mux.HandleFunc("/api/import-json", a.webAPIImportJSON)
 	mux.HandleFunc("/api/default-rules", a.webAPIDefaultRules)
+	if a.plugins != nil {
+		a.plugins.RegisterRoutes(mux, a)
+	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return err
@@ -4833,7 +4855,7 @@ func webForeground(info ForegroundAppInfo) webForegroundApp {
 	if !info.SeenAt.IsZero() {
 		seen = info.SeenAt.Format("15:04:05")
 	}
-	return webForegroundApp{PID: info.PID, ProcessName: info.ProcessName, Path: info.Path, Title: info.Title, Source: info.Source, SeenAt: seen}
+	return webForegroundApp{PID: info.PID, ProcessName: info.ProcessName, Path: info.Path, Title: info.Title, Source: info.Source, Elevated: info.Elevated, SeenAt: seen}
 }
 
 func (a *App) buildWebState() webState {
@@ -4940,6 +4962,7 @@ func (a *App) buildWebState() webState {
 		LastInput:            last,
 		LastInputAt:          lastAt,
 		HookStatus:           hook,
+		SelfElevated:         isCurrentProcessElevated(),
 	}
 }
 
@@ -5537,6 +5560,9 @@ func (a *App) webAPIAutoSwitch(w http.ResponseWriter, r *http.Request) {
 	case "add-captured":
 		err = a.webAddCapturedBinding(req.ProfileID)
 		message = "直前に使用していたアプリを登録しました。"
+	case "add-from-app":
+		err = a.webAddBindingFromApp(req)
+		message = "選択したアプリを自動切替ルールとして追加しました。"
 	case "add-empty":
 		err = a.webAddEmptyBinding(req.ProfileID)
 		message = "空の自動切替設定を追加しました。"
