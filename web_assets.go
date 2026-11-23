@@ -392,8 +392,8 @@ td.priority,th.priority,td.num,th.num{width:54px;text-align:center}
               <tr>
                 <th class="check">有効</th>
                 <th>この操作をしたら</th>
-                <th>短押し時</th>
-                <th>長押し時</th>
+                <th>実行内容</th>
+                <th>長押し / 方式</th>
                 <th class="check">通常動作を抑止</th>
                 <th class="check">サイド単押し取消</th>
               </tr>
@@ -418,22 +418,30 @@ td.priority,th.priority,td.num,th.num{width:54px;text-align:center}
           <div class="subpanel-title">選択中の割り当てを編集</div>
           <div id="ruleEmpty" class="muted">上の一覧から編集する割り当てを選択するか、「ルールを追加」を押してください。</div>
           <div id="ruleEditor" class="editor-grid hidden">
-            <label class="checkline span2"><input type="checkbox" id="ruleEnabled"> この割り当てを有効にする</label>
+            <label class="checkline"><input type="checkbox" id="ruleEnabled"> この割り当てを有効にする</label>
+            <div class="field">
+              <label for="ruleMode">実行方式</label>
+              <select id="ruleMode">
+                <option value="Tap">タップ / 長押し分岐（既定）</option>
+                <option value="Hold">そのまま長押し連動（押している間ずっと押し続ける）</option>
+              </select>
+            </div>
             <div class="field">
               <label for="ruleInput">この操作をしたら</label>
-              <input id="ruleInput" type="text" placeholder="例: サイド2 または F13">
+              <input id="ruleInput" type="text" placeholder="例: 左サイド2 / 右サイド1 / DPI+ボタン">
+              <div class="toolbar" id="inputQuickButtons" style="margin-top:4px" aria-label="マウスボタンを入力へ追加"></div>
               <small>「入力を記録」で実際のボタン・キー・ホイールを押して離すと自動反映されます。</small>
             </div>
             <div class="field">
-              <label for="ruleOutput">短押し時の実行内容</label>
+              <label for="ruleOutput" id="ruleOutputLabel">短押し時の実行内容</label>
               <input id="ruleOutput" type="text" placeholder="例: Ctrl + C（長押し専用なら空欄）">
               <div class="toolbar" style="margin-top:4px" aria-label="マウス操作を追加">
                 <span class="muted" style="font-size:12px">マウス操作:</span>
                 <button type="button" class="small" data-output-target="ruleOutput" data-output-token="左クリック">左クリック</button>
                 <button type="button" class="small" data-output-target="ruleOutput" data-output-token="右クリック">右クリック</button>
                 <button type="button" class="small" data-output-target="ruleOutput" data-output-token="中クリック">中クリック</button>
-                <button type="button" class="small" data-output-target="ruleOutput" data-output-token="サイド1">サイド1</button>
-                <button type="button" class="small" data-output-target="ruleOutput" data-output-token="サイド2">サイド2</button>
+                <button type="button" class="small" data-output-target="ruleOutput" data-output-token="左サイド1">左サイド1</button>
+                <button type="button" class="small" data-output-target="ruleOutput" data-output-token="左サイド2">左サイド2</button>
                 <button type="button" class="small" data-output-target="ruleOutput" data-output-token="ホイール上">ホイール↑</button>
                 <button type="button" class="small" data-output-target="ruleOutput" data-output-token="ホイール下">ホイール↓</button>
               </div>
@@ -441,10 +449,10 @@ td.priority,th.priority,td.num,th.num{width:54px;text-align:center}
             <label class="checkline"><input type="checkbox" id="ruleSuppress"> 最後の入力を通常動作させない</label>
             <label class="checkline"><input type="checkbox" id="rulePrefix"> サイド単押しを取り消す</label>
             <div class="span2 row">
-              <button type="button" id="testOutput">短押し時の実行内容をテスト</button>
-              <span class="help">記録モードは押したキー・ボタンをすべて離した瞬間に自動終了します。</span>
+              <button type="button" id="testOutput">実行内容をテスト</button>
+              <span class="help" id="ruleModeHelp">記録モードは押したキー・ボタンをすべて離した瞬間に自動終了します。</span>
             </div>
-            <div class="longpress-box">
+            <div class="longpress-box" id="longPressBox">
               <label class="checkline"><input type="checkbox" id="ruleLongEnabled"> この割り当てで長押し判定を使う</label>
               <div id="longPressOptions" class="longpress-grid hidden">
                 <div class="field">
@@ -467,8 +475,8 @@ td.priority,th.priority,td.num,th.num{width:54px;text-align:center}
                     <button type="button" class="small" data-output-target="ruleLongOutput" data-output-token="左クリック">左クリック</button>
                     <button type="button" class="small" data-output-target="ruleLongOutput" data-output-token="右クリック">右クリック</button>
                     <button type="button" class="small" data-output-target="ruleLongOutput" data-output-token="中クリック">中クリック</button>
-                    <button type="button" class="small" data-output-target="ruleLongOutput" data-output-token="サイド1">サイド1</button>
-                    <button type="button" class="small" data-output-target="ruleLongOutput" data-output-token="サイド2">サイド2</button>
+                    <button type="button" class="small" data-output-target="ruleLongOutput" data-output-token="左サイド1">左サイド1</button>
+                    <button type="button" class="small" data-output-target="ruleLongOutput" data-output-token="左サイド2">左サイド2</button>
                     <button type="button" class="small" data-output-target="ruleLongOutput" data-output-token="ホイール上">ホイール↑</button>
                     <button type="button" class="small" data-output-target="ruleLongOutput" data-output-token="ホイール下">ホイール↓</button>
                   </div>
@@ -663,7 +671,7 @@ td.priority,th.priority,td.num,th.num{width:54px;text-align:center}
 const $=id=>document.getElementById(id);
 let state=null,selectedRule=0,selectedBinding=0,dirtyRule=false,dirtyBinding=false,dirtyDebounce=false,busy=0;
 let activeTab=(function(){try{return localStorage.getItem('mbm_tab')||'rules'}catch(_e){return 'rules'}})();
-let lastProfilesSig='',lastRulesSig='',lastBindingsSig='',runningAppsCache=[];
+let lastProfilesSig='',lastRulesSig='',lastBindingsSig='',lastMouseButtonsSig='',runningAppsCache=[];
 const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 function setMessage(text,error){const e=$('message');e.textContent=text||'';e.classList.toggle('error',!!error)}
@@ -840,7 +848,23 @@ function fillBindingEditor(){
   $('bindingMatchDetail').textContent=b.matchSummary||'判定条件が未設定です。';
 }
 
+function renderInputQuickButtons(){
+  const wrap=$('inputQuickButtons');
+  if(!wrap)return;
+  const logical=(state&&state.mouseButtons)||[];
+  const sig=JSON.stringify(logical);
+  if(sig===lastMouseButtonsSig)return;
+  lastMouseButtonsSig=sig;
+  const base=['左サイド1','左サイド2','中クリック','ホイール上','ホイール下'];
+  const tokens=base.concat(logical.map(b=>b.name));
+  wrap.innerHTML='<span class="muted" style="font-size:12px">マウスボタン:</span>'+tokens.map(t=>'<button type="button" class="small" data-input-token="'+esc(t)+'">'+esc(t)+'</button>').join('');
+  wrap.querySelectorAll('button[data-input-token]').forEach(btn=>{
+    btn.addEventListener('click',()=>appendOutputToken('ruleInput',btn.dataset.inputToken));
+  });
+}
+
 function renderRules(force){
+  renderInputQuickButtons();
   if(selectedRule>=state.rules.length)selectedRule=Math.max(0,state.rules.length-1);
   $('ruleContext').textContent='編集対象: '+state.editorProfileName+' / 現在適用中: '+state.profileName+(state.activeProfile===state.effectiveProfile?'（同じプロファイル）':'（別のプロファイル）');
   const sig=JSON.stringify({sel:selectedRule,list:state.rules});
@@ -852,7 +876,8 @@ function renderRules(force){
     state.rules.forEach((r,i)=>{
       const tr=document.createElement('tr');
       if(i===selectedRule)tr.classList.add('selected');
-      tr.innerHTML='<td class="check"><input type="checkbox" '+(r.enabled?'checked':'')+'></td><td><b>'+esc(r.input||'（未設定）')+'</b></td><td>'+esc(r.output||'（なし）')+'</td><td>'+esc(r.longPressSummary)+'</td><td class="check"><input type="checkbox" '+(r.suppressTrigger?'checked':'')+' '+(r.suppressTriggerEditable?'':'disabled')+'></td><td class="check"><input type="checkbox" '+(r.suppressPrefix?'checked':'')+' '+(r.suppressPrefixEditable?'':'disabled')+'></td>';
+      const modeCell=r.mode==='Hold'?'<span class="pill ok">そのまま長押し (Hold)</span>':esc(r.longPressSummary);
+      tr.innerHTML='<td class="check"><input type="checkbox" '+(r.enabled?'checked':'')+'></td><td><b>'+esc(r.input||'（未設定）')+'</b></td><td>'+esc(r.output||'（なし）')+'</td><td>'+modeCell+'</td><td class="check"><input type="checkbox" '+(r.suppressTrigger?'checked':'')+' '+(r.suppressTriggerEditable?'':'disabled')+'></td><td class="check"><input type="checkbox" '+(r.suppressPrefix?'checked':'')+' '+(r.suppressPrefixEditable?'':'disabled')+'></td>';
       tr.addEventListener('click',()=>{selectedRule=i;dirtyRule=false;renderRules(true)});
       const c=tr.querySelectorAll('input');
       c[0].addEventListener('click',e=>{e.stopPropagation();toggleRule(i,'enabled')});
@@ -872,6 +897,7 @@ function fillRuleEditor(){
   if(!r)return;
   if(!dirtyRule){
     $('ruleEnabled').checked=r.enabled;
+    $('ruleMode').value=(r.mode==='Hold')?'Hold':'Tap';
     $('ruleInput').value=r.input;
     $('ruleOutput').value=r.output;
     $('ruleSuppress').checked=r.suppressTrigger;
@@ -888,7 +914,12 @@ function fillRuleEditor(){
 }
 
 function updateLongPressEditor(){
-  const enabled=$('ruleLongEnabled').checked;
+  const isHold=$('ruleMode').value==='Hold';
+  $('longPressBox').classList.toggle('hidden',isHold);
+  $('ruleOutputLabel').textContent=isHold?'押している間ずっと押し続ける内容（Hold）':'短押し時の実行内容';
+  $('ruleModeHelp').textContent=isHold?'そのまま長押し連動モード: マウスボタンを押した瞬間にDOWN、離した瞬間にUPを送るため、ゲーム側の短押し・長押しチャージの両方に自然に対応します。':'記録モードは押したキー・ボタンをすべて離した瞬間に自動終了します。';
+  if(isHold&&$('ruleLongEnabled').checked)$('ruleLongEnabled').checked=false;
+  const enabled=!isHold&&$('ruleLongEnabled').checked;
   const cancel=$('ruleLongAction').value==='Cancel';
   $('longPressOptions').classList.toggle('hidden',!enabled);
   $('longOutputBlock').classList.toggle('hidden',cancel);
@@ -1055,7 +1086,8 @@ document.querySelectorAll('[data-output-target]').forEach(button=>button.addEven
 async function saveRule(){
   if(!state.rules[selectedRule])return;
   dirtyRule=false;
-  await applyResult(api('/api/rule',{op:'save',index:selectedRule,enabled:$('ruleEnabled').checked,input:$('ruleInput').value,output:$('ruleOutput').value,suppressTrigger:$('ruleSuppress').checked,suppressPrefix:$('rulePrefix').checked,longPressEnabled:$('ruleLongEnabled').checked,longPressMs:Number($('ruleLongMs').value)||500,longPressAction:$('ruleLongAction').value,longPressOutput:$('ruleLongOutput').value}));
+  const mode=$('ruleMode').value==='Hold'?'Hold':'Tap';
+  await applyResult(api('/api/rule',{op:'save',index:selectedRule,enabled:$('ruleEnabled').checked,mode:mode,input:$('ruleInput').value,output:$('ruleOutput').value,suppressTrigger:$('ruleSuppress').checked,suppressPrefix:$('rulePrefix').checked,longPressEnabled:mode==='Hold'?false:$('ruleLongEnabled').checked,longPressMs:Number($('ruleLongMs').value)||500,longPressAction:$('ruleLongAction').value,longPressOutput:$('ruleLongOutput').value}));
 }
 async function action(name,extra){
   const payload=Object.assign({action:name,index:selectedRule,output:$('ruleOutput').value,longOutput:$('ruleLongOutput').value},extra||{});
@@ -1120,6 +1152,7 @@ $('recordLongOutput').addEventListener('click',()=>startRecord('record-long-outp
 $('stopRecord').addEventListener('click',()=>action('record-stop'));
 $('testOutput').addEventListener('click',()=>action('test-output'));
 $('testLongOutput').addEventListener('click',()=>action('test-long-output'));
+$('ruleMode').addEventListener('change',()=>{markRuleDirty();updateLongPressEditor()});
 $('ruleLongEnabled').addEventListener('change',()=>{markRuleDirty();updateLongPressEditor()});
 $('ruleLongAction').addEventListener('change',()=>{markRuleDirty();updateLongPressEditor()});
 ['ruleEnabled','ruleInput','ruleOutput','ruleSuppress','rulePrefix','ruleLongMs','ruleLongOutput'].forEach(id=>{

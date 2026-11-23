@@ -120,9 +120,10 @@ func TestJoyConHoldRuleValidation(t *testing.T) {
 	}
 
 	cases := []Rule{
-		{Input: []Item{{Kind: "Mouse", Code: "X1"}}, Mode: joyConRuleModeHold, Output: []Item{{Kind: "Key", Code: "W"}}},
+		{Input: []Item{{Kind: "Mouse", Code: "Left"}}, Mode: joyConRuleModeHold, Output: []Item{{Kind: "Key", Code: "W"}}},
+		{Input: []Item{{Kind: "Mouse", Code: "WheelUp"}}, Mode: joyConRuleModeHold, Output: []Item{{Kind: "Key", Code: "W"}}},
 		{Input: []Item{{Kind: "JoyCon", Code: "ZL"}, {Kind: "Mouse", Code: "X1"}}, Mode: joyConRuleModeHold, Output: []Item{{Kind: "Key", Code: "W"}}},
-		{Input: []Item{{Kind: "JoyCon", Code: "ZL"}}, Mode: joyConRuleModeHold, Output: []Item{{Kind: "Mouse", Code: "X1"}}},
+		{Input: []Item{{Kind: "JoyCon", Code: "ZL"}}, Mode: joyConRuleModeHold, Output: []Item{{Kind: "Mouse", Code: "WheelUp"}}},
 		{Input: []Item{{Kind: "JoyCon", Code: "ZL"}}, Mode: joyConRuleModeHold, LongPressEnabled: true, Output: []Item{{Kind: "Key", Code: "W"}}},
 	}
 	for i, rule := range cases {

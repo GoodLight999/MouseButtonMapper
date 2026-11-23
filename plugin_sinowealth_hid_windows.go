@@ -595,8 +595,16 @@ func (p *SinoWealthPlugin) readLocked(a *App) (SinoWealthConfigState, []byte, []
 	p.backupPath = bpath
 	p.hasBackup = hasBkp
 	p.stateMu.Unlock()
+	updateMouseAliasesFromSinoWealth(&stCopy)
 
 	return st, cfgBuf, btnBuf, nil
+}
+
+func (p *SinoWealthPlugin) Warmup(a *App) {
+	if a != nil && !a.isPluginEnabled(p.ID(), p.DefaultEnabled()) {
+		return
+	}
+	_, _, _ = p.ReadDevice(a)
 }
 
 func (p *SinoWealthPlugin) ReadDevice(a *App) (SinoWealthConfigState, string, error) {

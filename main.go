@@ -597,6 +597,8 @@ type App struct {
 	controllerPending    map[string]bool
 	controllerConsumed   map[string]bool
 	controllerHoldRules  map[string]Rule
+	activeHoldRules      map[string]Rule
+	heldMouseRefs        map[string]int
 	lastControllerInput  Item
 	lastControllerSource string
 	pendingTap           map[string]bool
@@ -733,7 +735,7 @@ type App struct {
 	autoBlockedSince        time.Time
 }
 
-var app = &App{enabled: true, foregroundMonitorStatus: "起動準備中", mouseDown: map[string]bool{}, mouseDownAt: map[string]time.Time{}, keyDown: map[uint32]bool{}, controllerDown: map[string]bool{}, controllerPending: map[string]bool{}, controllerConsumed: map[string]bool{}, controllerHoldRules: map[string]Rule{}, pendingTap: map[string]bool{}, consumedPrefix: map[string]bool{}, suppressedDown: map[string]bool{}, longPress: map[string]*longPressState{}, joyConOutputRefs: map[uint32]joyConOutputReference{}, joyConStatus: JoyConConnectionStatus{BatteryPercent: -1}, logCh: make(chan string, 4096), recordHeld: map[string]bool{}, recordingRuleIndex: -1, actionCh: make(chan outputJob, 8192), configSaveCh: make(chan []byte, 8), shutdownCh: make(chan struct{}), hookReady: make(chan struct{}), hookDone: make(chan struct{}), foregroundEventCh: make(chan uintptr, 32)}
+var app = &App{enabled: true, foregroundMonitorStatus: "起動準備中", mouseDown: map[string]bool{}, mouseDownAt: map[string]time.Time{}, keyDown: map[uint32]bool{}, controllerDown: map[string]bool{}, controllerPending: map[string]bool{}, controllerConsumed: map[string]bool{}, controllerHoldRules: map[string]Rule{}, activeHoldRules: map[string]Rule{}, heldMouseRefs: map[string]int{}, pendingTap: map[string]bool{}, consumedPrefix: map[string]bool{}, suppressedDown: map[string]bool{}, longPress: map[string]*longPressState{}, joyConOutputRefs: map[uint32]joyConOutputReference{}, joyConStatus: JoyConConnectionStatus{BatteryPercent: -1}, logCh: make(chan string, 4096), recordHeld: map[string]bool{}, recordingRuleIndex: -1, actionCh: make(chan outputJob, 8192), configSaveCh: make(chan []byte, 8), shutdownCh: make(chan struct{}), hookReady: make(chan struct{}), hookDone: make(chan struct{}), foregroundEventCh: make(chan uintptr, 32)}
 
 func main() {
 	if hasCommandLineFlag("--self-test", "/self-test") {
@@ -750,7 +752,8 @@ func main() {
 	defer pCoUninitialize.Call()
 	parseArgs()
 	app.initPaths()
-	app.plugins = newPluginRegistry(newSinoWealthPlugin())
+	swPlugin := newSinoWealthPlugin()
+	app.plugins = newPluginRegistry(swPlugin)
 	pid, _, _ := pGetCurrentProcessId.Call()
 	app.currentPID = uint32(pid)
 	if app.startedSafe {
@@ -765,6 +768,7 @@ func main() {
 	if err := app.ensureConfig(); err != nil {
 		app.logf("ensure config error: %v", err)
 	}
+	go swPlugin.Warmup(app)
 	if err := app.loadConfig(); err != nil {
 		app.logf("load config error: %v", err)
 		messageBox("設定読み込みエラー", fmt.Sprintf("設定を読み込めませんでした。\n%v\n\n安全のため、初期設定で停止状態起動します。", err))
@@ -1525,6 +1529,7 @@ func normalizeConfig(cfg Config) Config {
 func (a *App) applyConfig(cfg Config) {
 	a.mu.Lock()
 	a.abortAllLongPressLocked("configuration reloaded", false)
+	a.releaseActiveHoldsLocked("configuration reloaded")
 	a.clearJoyConInputStateLocked("configuration reloaded")
 	cfg = normalizeConfig(cfg)
 	a.config = cfg
@@ -1973,6 +1978,7 @@ func (a *App) cleanup() {
 	a.shuttingDown.Store(true)
 	a.mu.Lock()
 	a.abortAllLongPressLocked("application exit", true)
+	a.releaseActiveHoldsLocked("application exit")
 	a.clearJoyConInputStateLocked("application exit")
 	a.mu.Unlock()
 	a.sendMu.Lock()
@@ -2055,6 +2061,7 @@ func (a *App) handleKeyEvent(vk uint32, isDown bool) bool {
 	emergency := isDown && vk == VK_F12 && (a.keyDown[VK_CONTROL] || a.keyDown[VK_LCONTROL] || a.keyDown[VK_RCONTROL]) && (a.keyDown[VK_SHIFT] || a.keyDown[VK_LSHIFT] || a.keyDown[VK_RSHIFT]) && (a.keyDown[VK_MENU] || a.keyDown[VK_LMENU] || a.keyDown[VK_RMENU])
 	if emergency {
 		a.abortAllLongPressLocked("emergency stop", false)
+		a.releaseActiveHoldsLocked("emergency stop")
 		a.clearJoyConInputStateLocked("emergency stop")
 		a.recordingMode = ""
 		a.recordingRuleIndex = -1
@@ -2086,6 +2093,13 @@ func (a *App) handleKeyEvent(vk uint32, isDown bool) bool {
 	}
 
 	if !isDown {
+		holdKey := longPressKey(it)
+		if holdRule, ok := a.activeHoldRules[holdKey]; ok {
+			delete(a.activeHoldRules, holdKey)
+			a.mu.Unlock()
+			a.enqueueRuleGuaranteed(joyConHoldPhaseRule(holdRule, false))
+			return holdRule.SuppressTrigger
+		}
 		completion := a.finishLongPressLocked(it)
 		a.mu.Unlock()
 		if completion.HasRule {
@@ -2098,6 +2112,11 @@ func (a *App) handleKeyEvent(vk uint32, isDown bool) bool {
 	}
 
 	if wasDown {
+		holdKey := longPressKey(it)
+		if holdRule, ok := a.activeHoldRules[holdKey]; ok {
+			a.mu.Unlock()
+			return holdRule.SuppressTrigger
+		}
 		suppress := a.longPressSuppressedLocked(it)
 		a.mu.Unlock()
 		return suppress
@@ -2110,6 +2129,15 @@ func (a *App) handleKeyEvent(vk uint32, isDown bool) bool {
 	rule, ok := a.findBestTriggerLocked(it)
 	if ok && len(rule.Input) > 1 {
 		a.markPrefixesConsumedLocked(rule)
+	}
+	if ok && isJoyConHoldRule(rule) {
+		if a.activeHoldRules == nil {
+			a.activeHoldRules = map[string]Rule{}
+		}
+		a.activeHoldRules[longPressKey(it)] = rule
+		a.mu.Unlock()
+		a.enqueueRuleGuaranteed(joyConHoldPhaseRule(rule, true))
+		return rule.SuppressTrigger
 	}
 	if ok && rule.LongPressEnabled {
 		started := a.startLongPressLocked(rule, it)
@@ -2198,14 +2226,15 @@ func (a *App) buttonDown(btn string) bool {
 	if wasDown {
 		age := now.Sub(a.mouseDownAt[btn])
 		staleAfter := 2 * time.Second
-		if a.longPress[longPressKey(trigger)] != nil {
+		if a.longPress[longPressKey(trigger)] != nil || a.hasActiveHoldLocked(trigger) {
 			// 長押し中のゲーミングマウスがDOWNを再送しても、正当な押下を
-			// UP欠落と誤認しない。長押し状態がある場合だけ猶予を広げる。
+			// UP欠落と誤認しない。長押し・Hold状態がある場合だけ猶予を広げる。
 			staleAfter = 10 * time.Second
 		}
 		if age > staleAfter {
 			// UP欠落後に次のDOWNが来た場合、永久に「押下中」のまま固まらないよう自己修復する。
 			a.abortLongPressForTriggerLocked(trigger, "stale mouse-down recovered")
+			a.releaseActiveHoldForTriggerLocked(trigger)
 			delete(a.longPress, longPressKey(trigger))
 			delete(a.pendingTap, btn)
 			delete(a.consumedPrefix, btn)
@@ -2218,8 +2247,8 @@ func (a *App) buttonDown(btn string) bool {
 	a.mouseDownAt[btn] = now
 	if wasDown {
 		// 一部のゲーミングマウス/ドライバは押しっぱなし中にDOWNを再送する。
-		// Tap/長押しルールを重複発火させず、既に抑制中のボタンだけ同じ扱いを続ける。
-		suppress := !isPrimaryButton(btn) && (a.suppressedDown[btn] || a.pendingTap[btn] || a.consumedPrefix[btn] || a.longPressSuppressedLocked(trigger))
+		// Tap/長押し/Holdルールを重複発火させず、既に抑制中のボタンだけ同じ扱いを続ける。
+		suppress := !isPrimaryButton(btn) && (a.suppressedDown[btn] || a.pendingTap[btn] || a.consumedPrefix[btn] || a.longPressSuppressedLocked(trigger) || a.hasActiveHoldLocked(trigger))
 		a.mu.Unlock()
 		return suppress
 	}
@@ -2239,6 +2268,18 @@ func (a *App) buttonDown(btn string) bool {
 	rule, matched := a.findBestTriggerLocked(trigger)
 	if matched && len(rule.Input) > 1 {
 		a.markPrefixesConsumedLocked(rule)
+	}
+	if matched && isJoyConHoldRule(rule) {
+		if a.activeHoldRules == nil {
+			a.activeHoldRules = map[string]Rule{}
+		}
+		a.activeHoldRules[longPressKey(trigger)] = rule
+		if !isPrimaryButton(btn) && rule.SuppressTrigger {
+			a.suppressedDown[btn] = true
+		}
+		a.mu.Unlock()
+		a.enqueueRuleGuaranteed(joyConHoldPhaseRule(rule, true))
+		return !isPrimaryButton(btn) && rule.SuppressTrigger
 	}
 	if matched && rule.LongPressEnabled {
 		started := a.startLongPressLocked(rule, trigger)
@@ -2286,6 +2327,23 @@ func (a *App) buttonUp(btn string) bool {
 			go a.finishRecordingAuto()
 		}
 		return !isPrimaryButton(btn)
+	}
+
+	if holdRule, ok := a.activeHoldRules[longPressKey(trigger)]; ok {
+		suppressed := a.suppressedDown[btn]
+		consumed := a.consumedPrefix[btn]
+		delete(a.activeHoldRules, longPressKey(trigger))
+		delete(a.mouseDown, btn)
+		delete(a.mouseDownAt, btn)
+		delete(a.pendingTap, btn)
+		delete(a.consumedPrefix, btn)
+		delete(a.suppressedDown, btn)
+		a.mu.Unlock()
+		a.enqueueRuleGuaranteed(joyConHoldPhaseRule(holdRule, false))
+		if isPrimaryButton(btn) {
+			return false
+		}
+		return holdRule.SuppressTrigger || suppressed || consumed
 	}
 
 	completion := a.finishLongPressLocked(trigger)
@@ -2376,10 +2434,40 @@ func (a *App) isSuppressPrefixButtonLocked(btn string) bool {
 	}
 	return false
 }
+func (a *App) hasActiveHoldLocked(it Item) bool {
+	if a.activeHoldRules == nil {
+		return false
+	}
+	_, ok := a.activeHoldRules[longPressKey(it)]
+	return ok
+}
+
+func (a *App) releaseActiveHoldForTriggerLocked(it Item) {
+	if a.activeHoldRules == nil {
+		return
+	}
+	key := longPressKey(it)
+	if holdRule, ok := a.activeHoldRules[key]; ok {
+		delete(a.activeHoldRules, key)
+		a.enqueueRuleGuaranteed(joyConHoldPhaseRule(holdRule, false))
+	}
+}
+
+func (a *App) releaseActiveHoldsLocked(reason string) {
+	if len(a.activeHoldRules) == 0 {
+		return
+	}
+	for key, holdRule := range a.activeHoldRules {
+		delete(a.activeHoldRules, key)
+		a.enqueueRuleGuaranteed(joyConHoldPhaseRule(holdRule, false))
+	}
+}
+
 func (a *App) markPrefixesConsumedLocked(r Rule) {
 	for i := 0; i < len(r.Input)-1; i++ {
 		it := r.Input[i]
 		a.abortLongPressForTriggerLocked(it, "input became a prefix of a longer rule")
+		a.releaseActiveHoldForTriggerLocked(it)
 		if strings.EqualFold(it.Kind, "Mouse") {
 			a.consumedPrefix[normMouse(it.Code)] = true
 		}
@@ -3716,9 +3804,9 @@ func mouseName(code string) string {
 	case "Middle":
 		return "中クリック"
 	case "X1":
-		return "サイド1"
+		return "左サイド1"
 	case "X2":
-		return "サイド2"
+		return "左サイド2"
 	case "WheelUp":
 		return "ホイール上"
 	case "WheelDown":
@@ -3727,6 +3815,9 @@ func mouseName(code string) string {
 	return code
 }
 func vkName(vk uint32) string {
+	if alias, ok := mouseAliasNameForVK(vk); ok {
+		return alias
+	}
 	switch genericVK(vk) {
 	case VK_CONTROL:
 		return "Ctrl"
@@ -3782,6 +3873,7 @@ func (a *App) handleCommand(id uint32) {
 		if a.enabled && !a.emergency {
 			a.enabled = false
 			a.abortAllLongPressLocked("conversion stopped", false)
+			a.releaseActiveHoldsLocked("conversion stopped")
 			a.clearJoyConInputStateLocked("conversion stopped")
 		} else {
 			a.enabled = true
@@ -4335,12 +4427,16 @@ func parseItemsText(text string, allowMouse bool, allowKey bool) ([]Item, error)
 			}
 		}
 		if allowKey {
+			if vk, ok := parseMouseAliasVK(tok); ok {
+				items = append(items, Item{Kind: "Key", Code: strconv.Itoa(int(vk))})
+				continue
+			}
 			if vk, ok := parseVK(tok); ok {
 				items = append(items, Item{Kind: "Key", Code: strconv.Itoa(int(vk))})
 				continue
 			}
 		}
-		return nil, fmt.Errorf("%q を解釈できません。例: サイド1 + ホイール上 / Ctrl + Win + ←", tok)
+		return nil, fmt.Errorf("%q を解釈できません。例: 左サイド1 + ホイール上 / 右サイド1 / Ctrl + Win + ←", tok)
 	}
 	return items, nil
 }
@@ -4391,9 +4487,9 @@ func parseMouseToken(tok string) (string, bool) {
 		return "Right", true
 	case "middle", "mbutton", "中クリック", "中":
 		return "Middle", true
-	case "x1", "back", "戻る", "side1", "サイド1", "サイドボタン1":
+	case "x1", "back", "戻る", "side1", "lside1", "leftside1", "サイド1", "サイドボタン1", "左サイド1", "左サイドボタン1":
 		return "X1", true
-	case "x2", "forward", "進む", "side2", "サイド2", "サイドボタン2":
+	case "x2", "forward", "進む", "side2", "lside2", "leftside2", "サイド2", "サイドボタン2", "左サイド2", "左サイドボタン2":
 		return "X2", true
 	case "wheelup", "wheel_up", "ホイール上", "上ホイール":
 		return "WheelUp", true
@@ -4550,41 +4646,43 @@ type webAutoBinding struct {
 }
 
 type webState struct {
-	Version              string           `json:"version"`
-	ConfigPath           string           `json:"configPath"`
-	LogPath              string           `json:"logPath"`
-	UIURL                string           `json:"uiUrl"`
-	Enabled              bool             `json:"enabled"`
-	Emergency            bool             `json:"emergency"`
-	Status               string           `json:"status"`
-	ProfileName          string           `json:"profileName"`
-	BaseProfileName      string           `json:"baseProfileName"`
-	EditorProfileName    string           `json:"editorProfileName"`
-	ActiveProfile        int              `json:"activeProfile"`
-	BaseProfile          int              `json:"baseProfile"`
-	EffectiveProfile     int              `json:"effectiveProfile"`
-	Profiles             []webProfile     `json:"profiles"`
-	Rules                []webRule        `json:"rules"`
-	AutoSwitchEnabled    bool             `json:"autoSwitchEnabled"`
-	ControllerEnabled    bool             `json:"controllerEnabled"`
-	ControllerVisible    bool             `json:"controllerVisible"`
-	AutoDebounceMs       int              `json:"autoDebounceMs"`
-	AutoBindings         []webAutoBinding `json:"autoBindings"`
-	AutoMatchedBindingID string           `json:"autoMatchedBindingId"`
-	AutoMatchedName      string           `json:"autoMatchedName"`
-	AutoMonitorStatus    string           `json:"autoMonitorStatus"`
-	AutoDecision         string           `json:"autoDecision"`
-	AutoDecisionDetail   string           `json:"autoDecisionDetail"`
-	AutoDecisionAt       string           `json:"autoDecisionAt"`
-	AutoLastSwitchAt     string           `json:"autoLastSwitchAt"`
-	ForegroundApp        webForegroundApp `json:"foregroundApp"`
-	LastExternalApp      webForegroundApp `json:"lastExternalApp"`
-	RecordingMode        string           `json:"recordingMode"`
-	RecordedText         string           `json:"recordedText"`
-	LastInput            string           `json:"lastInput"`
-	LastInputAt          string           `json:"lastInputAt"`
-	HookStatus           string           `json:"hookStatus"`
-	SelfElevated         bool             `json:"selfElevated"`
+	Version              string               `json:"version"`
+	ConfigPath           string               `json:"configPath"`
+	LogPath              string               `json:"logPath"`
+	UIURL                string               `json:"uiUrl"`
+	Enabled              bool                 `json:"enabled"`
+	Emergency            bool                 `json:"emergency"`
+	Status               string               `json:"status"`
+	ProfileName          string               `json:"profileName"`
+	BaseProfileName      string               `json:"baseProfileName"`
+	EditorProfileName    string               `json:"editorProfileName"`
+	ActiveProfile        int                  `json:"activeProfile"`
+	BaseProfile          int                  `json:"baseProfile"`
+	EffectiveProfile     int                  `json:"effectiveProfile"`
+	Profiles             []webProfile         `json:"profiles"`
+	Rules                []webRule            `json:"rules"`
+	AutoSwitchEnabled    bool                 `json:"autoSwitchEnabled"`
+	ControllerEnabled    bool                 `json:"controllerEnabled"`
+	ControllerVisible    bool                 `json:"controllerVisible"`
+	AutoDebounceMs       int                  `json:"autoDebounceMs"`
+	AutoBindings         []webAutoBinding     `json:"autoBindings"`
+	AutoMatchedBindingID string               `json:"autoMatchedBindingId"`
+	AutoMatchedName      string               `json:"autoMatchedName"`
+	AutoMonitorStatus    string               `json:"autoMonitorStatus"`
+	AutoDecision         string               `json:"autoDecision"`
+	AutoDecisionDetail   string               `json:"autoDecisionDetail"`
+	AutoDecisionAt       string               `json:"autoDecisionAt"`
+	AutoLastSwitchAt     string               `json:"autoLastSwitchAt"`
+	ForegroundApp        webForegroundApp     `json:"foregroundApp"`
+	LastExternalApp      webForegroundApp     `json:"lastExternalApp"`
+	RecordingMode        string               `json:"recordingMode"`
+	RecordedText         string               `json:"recordedText"`
+	LastInput            string               `json:"lastInput"`
+	LastInputAt          string               `json:"lastInputAt"`
+	HookStatus           string               `json:"hookStatus"`
+	SelfElevated         bool                 `json:"selfElevated"`
+	MouseDeviceName      string               `json:"mouseDeviceName"`
+	MouseButtons         []MouseLogicalButton `json:"mouseButtons"`
 }
 
 func (a *App) startWebServer() error {
@@ -4927,6 +5025,7 @@ func (a *App) buildWebState() webState {
 	if !a.autoLastSwitchAt.IsZero() {
 		autoLastSwitchAt = a.autoLastSwitchAt.Format("15:04:05")
 	}
+	logicalButtons, mouseDevName := currentMouseLogicalButtons()
 	return webState{
 		Version:              appVersion,
 		ConfigPath:           a.configPath,
@@ -4963,6 +5062,8 @@ func (a *App) buildWebState() webState {
 		LastInputAt:          lastAt,
 		HookStatus:           hook,
 		SelfElevated:         isCurrentProcessElevated(),
+		MouseDeviceName:      mouseDevName,
+		MouseButtons:         logicalButtons,
 	}
 }
 
@@ -4999,6 +5100,7 @@ func (a *App) webAPIAction(w http.ResponseWriter, r *http.Request) {
 		if a.enabled && !a.emergency {
 			a.enabled = false
 			a.abortAllLongPressLocked("conversion stopped", false)
+			a.releaseActiveHoldsLocked("conversion stopped")
 			a.clearJoyConInputStateLocked("conversion stopped")
 		} else {
 			a.enabled = true
