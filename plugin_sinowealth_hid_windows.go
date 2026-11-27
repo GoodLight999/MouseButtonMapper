@@ -450,34 +450,52 @@ func swOpenRW(path string) (uintptr, error) {
 }
 
 func swQueryCmd(hCmd uintptr, cmdID byte) ([]byte, error) {
-	req := [sinoWealthCmdLen]byte{sinoWealthReportCmd, cmdID}
-	if r, _, err := swHidDSetFeature.Call(hCmd, uintptr(unsafe.Pointer(&req[0])), sinoWealthCmdLen); r == 0 {
-		return nil, fmt.Errorf("SetFeature(cmd=0x%02X) 失敗: %v", cmdID, err)
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		req := [sinoWealthCmdLen]byte{sinoWealthReportCmd, cmdID}
+		if r, _, err := swHidDSetFeature.Call(hCmd, uintptr(unsafe.Pointer(&req[0])), sinoWealthCmdLen); r == 0 {
+			lastErr = fmt.Errorf("SetFeature(cmd=0x%02X) 失敗: %v", cmdID, err)
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+		resp := [sinoWealthCmdLen]byte{sinoWealthReportCmd}
+		if r, _, err := swHidDGetFeature.Call(hCmd, uintptr(unsafe.Pointer(&resp[0])), sinoWealthCmdLen); r == 0 {
+			lastErr = fmt.Errorf("GetFeature(cmd=0x%02X) 失敗: %v", cmdID, err)
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+		if resp[1] != cmdID {
+			return nil, fmt.Errorf("コマンド 0x%02X に未対応です（応答: 0x%02X）", cmdID, resp[1])
+		}
+		return resp[:], nil
 	}
-	resp := [sinoWealthCmdLen]byte{sinoWealthReportCmd}
-	if r, _, err := swHidDGetFeature.Call(hCmd, uintptr(unsafe.Pointer(&resp[0])), sinoWealthCmdLen); r == 0 {
-		return nil, fmt.Errorf("GetFeature(cmd=0x%02X) 失敗: %v", cmdID, err)
-	}
-	if resp[1] != cmdID {
-		return nil, fmt.Errorf("コマンド 0x%02X に未対応です（応答: 0x%02X）", cmdID, resp[1])
-	}
-	return resp[:], nil
+	return nil, lastErr
 }
 
 func swReadReportOnce(hCmd, hCfg uintptr, cmdID byte) ([]byte, error) {
-	req := [sinoWealthCmdLen]byte{sinoWealthReportCmd, cmdID}
-	if r, _, err := swHidDSetFeature.Call(hCmd, uintptr(unsafe.Pointer(&req[0])), sinoWealthCmdLen); r == 0 {
-		return nil, fmt.Errorf("SetFeature(cmd=0x%02X) 失敗: %v", cmdID, err)
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		req := [sinoWealthCmdLen]byte{sinoWealthReportCmd, cmdID}
+		if r, _, err := swHidDSetFeature.Call(hCmd, uintptr(unsafe.Pointer(&req[0])), sinoWealthCmdLen); r == 0 {
+			lastErr = fmt.Errorf("SetFeature(cmd=0x%02X) 失敗: %v", cmdID, err)
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+		buf := make([]byte, sinoWealthReportLen)
+		buf[0] = sinoWealthReportConfig
+		if r, _, err := swHidDGetFeature.Call(hCfg, uintptr(unsafe.Pointer(&buf[0])), sinoWealthReportLen); r == 0 {
+			lastErr = fmt.Errorf("GetFeature(0x04 / cmd=0x%02X) 失敗: %v", cmdID, err)
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+		if buf[1] != cmdID {
+			lastErr = fmt.Errorf("期待しないレポート応答です (cmd=0x%02X, got=0x%02X)", cmdID, buf[1])
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+		return buf, nil
 	}
-	buf := make([]byte, sinoWealthReportLen)
-	buf[0] = sinoWealthReportConfig
-	if r, _, err := swHidDGetFeature.Call(hCfg, uintptr(unsafe.Pointer(&buf[0])), sinoWealthReportLen); r == 0 {
-		return nil, fmt.Errorf("GetFeature(0x04 / cmd=0x%02X) 失敗: %v", cmdID, err)
-	}
-	if buf[1] != cmdID {
-		return nil, fmt.Errorf("期待しないレポート応答です (cmd=0x%02X, got=0x%02X)", cmdID, buf[1])
-	}
-	return buf, nil
+	return nil, lastErr
 }
 
 // swReadReport reads a 520-byte report and confirms two consecutive reads match
@@ -502,12 +520,19 @@ func swWriteReport(hCfg uintptr, report []byte) error {
 	if len(report) != sinoWealthReportLen {
 		return fmt.Errorf("書き込みレポート長が不正です: %d", len(report))
 	}
-	if r, _, err := swHidDSetFeature.Call(hCfg, uintptr(unsafe.Pointer(&report[0])), sinoWealthReportLen); r == 0 {
-		return fmt.Errorf("SetFeature(0x04) 書き込み失敗: %v", err)
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if r, _, err := swHidDSetFeature.Call(hCfg, uintptr(unsafe.Pointer(&report[0])), sinoWealthReportLen); r == 0 {
+			lastErr = fmt.Errorf("SetFeature(0x04) 書き込み失敗: %v", err)
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+		// Critical safety wait: SinoWealth Flash writes corrupt adjacent blocks if accessed immediately.
+		// Official OemDrv.exe sleeps 400ms; we use 450ms for extra margin.
+		time.Sleep(450 * time.Millisecond)
+		return nil
 	}
-	// Critical safety wait: SinoWealth Flash writes corrupt adjacent blocks if accessed immediately.
-	time.Sleep(450 * time.Millisecond)
-	return nil
+	return lastErr
 }
 
 func (p *SinoWealthPlugin) backupFilePath(a *App, vid, pid uint16, fw string) string {

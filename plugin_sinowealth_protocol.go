@@ -174,6 +174,10 @@ func sinoWealthSensorInfo(sensor uint8) (name string, maxDPI int) {
 }
 
 func sinoWealthRawToDPI(sensor uint8, raw uint8) int {
+	if sensor == sinoWealthSensorPMW3360 && raw == 120 {
+		// Official PAWN_Setup_V1.0.4 Cfg.ini maps DPIHW=120 (0x78) to 24000 DPI (interpolated).
+		return 24000
+	}
 	v := int(raw)
 	if sensor == sinoWealthSensorPMW3360 || sensor == sinoWealthSensorPMW3327 {
 		v++
@@ -182,8 +186,14 @@ func sinoWealthRawToDPI(sensor uint8, raw uint8) int {
 }
 
 func sinoWealthDPIToRaw(sensor uint8, dpi int) (uint8, error) {
+	if sensor == sinoWealthSensorPMW3360 && dpi == 24000 {
+		return 120, nil
+	}
 	_, maxDPI := sinoWealthSensorInfo(sensor)
 	if dpi < 100 || dpi > maxDPI || dpi%100 != 0 {
+		if sensor == sinoWealthSensorPMW3360 {
+			return 0, fmt.Errorf("DPIは100〜%dの100刻み（または24000）で指定してください（入力: %d）", maxDPI, dpi)
+		}
 		return 0, fmt.Errorf("DPIは100〜%dの100刻みで指定してください（入力: %d）", maxDPI, dpi)
 	}
 	v := dpi / 100
@@ -194,6 +204,69 @@ func sinoWealthDPIToRaw(sensor uint8, dpi int) (uint8, error) {
 		return 0, fmt.Errorf("DPI値 %d はエンコード範囲外です", dpi)
 	}
 	return uint8(v), nil
+}
+
+// sinoWealthVKToHID maps a Windows Virtual-Key code to either a USB HID modifier bit
+// (LCtrl=0x01, LShift=0x02, LAlt=0x04, LWin=0x08) or a USB HID Keyboard Usage ID.
+func sinoWealthVKToHID(vk uint32) (usage uint8, modBit uint8, ok bool) {
+	switch vk {
+	case 0x11, 0xA2, 0xA3: // VK_CONTROL / LCONTROL / RCONTROL
+		return 0, 0x01, true
+	case 0x10, 0xA0, 0xA1: // VK_SHIFT / LSHIFT / RSHIFT
+		return 0, 0x02, true
+	case 0x12, 0xA4, 0xA5: // VK_MENU / LMENU / RMENU
+		return 0, 0x04, true
+	case 0x5B, 0x5C: // VK_LWIN / VK_RWIN
+		return 0, 0x08, true
+	case 0x0D: // Enter
+		return 0x28, 0, true
+	case 0x1B: // Escape
+		return 0x29, 0, true
+	case 0x08: // Backspace
+		return 0x2A, 0, true
+	case 0x09: // Tab
+		return 0x2B, 0, true
+	case 0x20: // Space
+		return 0x2C, 0, true
+	case 0x2C: // PrintScreen
+		return 0x46, 0, true
+	case 0x2D: // Insert
+		return 0x49, 0, true
+	case 0x24: // Home
+		return 0x4A, 0, true
+	case 0x21: // PageUp
+		return 0x4B, 0, true
+	case 0x2E: // Delete
+		return 0x4C, 0, true
+	case 0x23: // End
+		return 0x4D, 0, true
+	case 0x22: // PageDown
+		return 0x4E, 0, true
+	case 0x27: // Right
+		return 0x4F, 0, true
+	case 0x25: // Left
+		return 0x50, 0, true
+	case 0x28: // Down
+		return 0x51, 0, true
+	case 0x26: // Up
+		return 0x52, 0, true
+	}
+	if vk >= 'A' && vk <= 'Z' {
+		return uint8(0x04 + (vk - 'A')), 0, true
+	}
+	if vk >= '1' && vk <= '9' {
+		return uint8(0x1E + (vk - '1')), 0, true
+	}
+	if vk == '0' {
+		return 0x27, 0, true
+	}
+	if vk >= 0x70 && vk <= 0x7B { // F1..F12
+		return uint8(0x3A + (vk - 0x70)), 0, true
+	}
+	if vk >= 0x7C && vk <= 0x87 { // F13..F24
+		return uint8(0x68 + (vk - 0x7C)), 0, true
+	}
+	return 0, 0, false
 }
 
 func sinoWealthRawToRate(raw uint8) int {
@@ -680,6 +753,18 @@ func buildSinoWealthButtonsWriteReport(origBtnBuf []byte, updates []SinoWealthBu
 		off := 0x08 + act.Index*4
 		copy(out[off:off+4], raw[:])
 	}
+	// Safety invariant (matching official OemDrv.exe tc_ms12): at least one slot must remain Left Click.
+	hasLeft := false
+	for i := 0; i < sinoWealthButtonSlots; i++ {
+		off := 0x08 + i*4
+		if out[off] == 0x11 && out[off+1] == 0x01 {
+			hasLeft = true
+			break
+		}
+	}
+	if !hasLeft {
+		return nil, errors.New("安全のため、少なくとも1つのボタンを「左クリック」に設定する必要があります")
+	}
 	return out, nil
 }
 
@@ -801,6 +886,14 @@ func buildSinoWealthConfigWriteReport(origCfgBuf []byte, patch SinoWealthConfigP
 		}
 		// Preserve upper nibble (device-specific flags, e.g. 0x20 on GM07)
 		out[0x35] = (out[0x35] & 0xF0) | uint8(patch.RGBEffectMode&0x0F)
+	}
+
+	if patch.SingleBrightness > 0 && strings.TrimSpace(patch.SingleColor) == "" {
+		bright := patch.SingleBrightness
+		if bright > 4 {
+			bright = 4
+		}
+		out[0x38] = uint8(bright << 4)
 	}
 
 	if strings.TrimSpace(patch.SingleColor) != "" {

@@ -6,15 +6,188 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 )
 
 type sinoWealthAPIReq struct {
-	Op         string                   `json:"op"`
-	Preset     string                   `json:"preset,omitempty"`
-	ColorOrder string                   `json:"colorOrder,omitempty"`
-	Buttons    []SinoWealthButtonAction `json:"buttons,omitempty"`
-	Config     *SinoWealthConfigPatch   `json:"config,omitempty"`
-	Link       *SinoWealthHardwareLink  `json:"link,omitempty"`
+	Op                    string                   `json:"op"`
+	Preset                string                   `json:"preset,omitempty"`
+	Scope                 string                   `json:"scope,omitempty"`
+	DisableConvertedRules bool                     `json:"disableConvertedRules,omitempty"`
+	ColorOrder            string                   `json:"colorOrder,omitempty"`
+	Buttons               []SinoWealthButtonAction `json:"buttons,omitempty"`
+	Config                *SinoWealthConfigPatch   `json:"config,omitempty"`
+	Link                  *SinoWealthHardwareLink  `json:"link,omitempty"`
+}
+
+func convertOutputItemsToSinoWealthButton(slotIdx int, items []Item) (SinoWealthButtonAction, bool) {
+	act := SinoWealthButtonAction{Index: slotIdx}
+	if len(items) == 0 {
+		return act, false
+	}
+	if len(items) == 1 && strings.EqualFold(items[0].Kind, "Mouse") {
+		switch normMouse(items[0].Code) {
+		case "Left":
+			act.Kind, act.Value = "mouse", "left"
+			return act, true
+		case "Right":
+			act.Kind, act.Value = "mouse", "right"
+			return act, true
+		case "Middle":
+			act.Kind, act.Value = "mouse", "middle"
+			return act, true
+		case "X1":
+			act.Kind, act.Value = "mouse", "x1"
+			return act, true
+		case "X2":
+			act.Kind, act.Value = "mouse", "x2"
+			return act, true
+		case "WheelUp":
+			act.Kind, act.Value = "wheel", "up"
+			return act, true
+		case "WheelDown":
+			act.Kind, act.Value = "wheel", "down"
+			return act, true
+		}
+		return act, false
+	}
+	var modMask uint8
+	var mainUsage uint8
+	keyCount := 0
+	for _, it := range items {
+		if !strings.EqualFold(it.Kind, "Key") {
+			return act, false
+		}
+		vk, ok := parseVK(it.Code)
+		if !ok {
+			return act, false
+		}
+		usage, modBit, ok := sinoWealthVKToHID(vk)
+		if !ok {
+			return act, false
+		}
+		if modBit != 0 {
+			modMask |= modBit
+		} else {
+			keyCount++
+			if keyCount > 1 {
+				// SinoWealth 0x21 supports modifiers + 1 main HID key (multi-normal-key chords require macros/software).
+				return act, false
+			}
+			mainUsage = usage
+		}
+	}
+	if mainUsage == 0 {
+		return act, false
+	}
+	act.Kind = "key"
+	act.Modifiers = modMask
+	act.HIDUsage = mainUsage
+	act.Value = fmt.Sprintf("0x%02X", mainUsage)
+	return act, true
+}
+
+func sinoWealthSlotForSingleInput(it Item, currentButtons []SinoWealthButtonAction) (int, bool) {
+	if strings.EqualFold(it.Kind, "Mouse") {
+		switch normMouse(it.Code) {
+		case "X1":
+			return 3, true
+		case "X2":
+			return 4, true
+		}
+		return -1, false
+	}
+	if !strings.EqualFold(it.Kind, "Key") {
+		return -1, false
+	}
+	vk, ok := parseVK(it.Code)
+	if !ok {
+		return -1, false
+	}
+	// First match against the mouse's currently programmed F13..F24 slots.
+	for _, btn := range currentButtons {
+		if btn.Index < 5 || btn.Index > 8 {
+			continue
+		}
+		if btn.Kind == "key" && btn.Modifiers == 0 {
+			if btnVK, _, ok := hidFKeyUsageToVK(btn.HIDUsage); ok && btnVK == vk {
+				return btn.Index, true
+			}
+		}
+	}
+	// Fallback to standard safe / legacy extended F-key conventions so converting works even after prior direct writes.
+	switch vk {
+	case 0x7C: // F13 -> 右サイド1 (slot 7)
+		return 7, true
+	case 0x81, 0x7D: // F18 / F14 -> 右サイド2 (slot 8)
+		return 8, true
+	case 0x82, 0x7E: // F19 / F15 -> DPI+ (slot 5)
+		return 5, true
+	case 0x83, 0x7F: // F20 / F16 -> DPI- (slot 6)
+		return 6, true
+	}
+	return -1, false
+}
+
+// planSinoWealthDirectWriteFromProfile converts eligible single-button rules in a profile
+// directly into SinoWealth onboard Flash button actions.
+// scope == "ext4" (hybrid): converts slots 5..8 only, keeping X1/X2 intact for software chords and games.
+// scope == "all" (standalone): converts slots 3..8 (including X1/X2) for software-free portable operation.
+func planSinoWealthDirectWriteFromProfile(prof Profile, currentButtons []SinoWealthButtonAction, scope string) (buttons []SinoWealthButtonAction, writtenLabels []string, convertedRuleIdx []int) {
+	includeLeftSide := strings.EqualFold(strings.TrimSpace(scope), "all")
+	buttons = make([]SinoWealthButtonAction, 9)
+	defaults := []SinoWealthButtonAction{
+		{Index: 0, Kind: "mouse", Value: "left"},
+		{Index: 1, Kind: "mouse", Value: "right"},
+		{Index: 2, Kind: "mouse", Value: "middle"},
+		{Index: 3, Kind: "mouse", Value: "x1"},
+		{Index: 4, Kind: "mouse", Value: "x2"},
+		{Index: 5, Kind: "dpi", Value: "up"},
+		{Index: 6, Kind: "dpi", Value: "down"},
+		{Index: 7, Kind: "key", HIDUsage: 0x68},
+		{Index: 8, Kind: "key", HIDUsage: 0x6D},
+	}
+	for i := 0; i < 9; i++ {
+		if i < len(currentButtons) && currentButtons[i].Kind != "" && currentButtons[i].Kind != "none" {
+			buttons[i] = currentButtons[i]
+			buttons[i].Index = i
+		} else {
+			buttons[i] = defaults[i]
+		}
+	}
+	// Always keep core primary clicks safe; in hybrid mode also ensure X1/X2 stay hardware X1/X2 for chords.
+	buttons[0] = defaults[0]
+	buttons[1] = defaults[1]
+	buttons[2] = defaults[2]
+	if !includeLeftSide {
+		buttons[3] = defaults[3]
+		buttons[4] = defaults[4]
+	}
+
+	assignedSlot := map[int]bool{}
+	for idx, r := range prof.Rules {
+		if !r.Enabled || len(r.Input) != 1 || r.LongPressEnabled {
+			continue
+		}
+		slot, ok := sinoWealthSlotForSingleInput(r.Input[0], currentButtons)
+		if !ok || assignedSlot[slot] {
+			continue
+		}
+		if (slot == 3 || slot == 4) && !includeLeftSide {
+			continue
+		}
+		act, ok := convertOutputItemsToSinoWealthButton(slot, r.Output)
+		if !ok {
+			continue
+		}
+		buttons[slot] = act
+		assignedSlot[slot] = true
+		convertedRuleIdx = append(convertedRuleIdx, idx)
+		raw, _ := encodeSinoWealthButton(act)
+		dec := decodeSinoWealthButton(slot, raw)
+		writtenLabels = append(writtenLabels, fmt.Sprintf("%s=%s", sinoWealthButtonLabel(slot), dec.Display))
+	}
+	return buttons, writtenLabels, convertedRuleIdx
 }
 
 func (p *SinoWealthPlugin) buildWebPayload(a *App, device *SinoWealthConfigState) map[string]any {
@@ -130,6 +303,60 @@ func (p *SinoWealthPlugin) handleAPI(w http.ResponseWriter, r *http.Request, a *
 		}
 		resp := p.buildWebPayload(a, &st)
 		resp["message"] = "オンボードのボタン割り当てをマウスへ書き込み、検証しました。"
+		writeJSON(w, resp)
+
+	case "write-profile-direct":
+		if !a.isPluginEnabled(p.ID(), p.DefaultEnabled()) {
+			writeError(w, fmt.Errorf("先に SinoWealth プラグインを有効にしてください。"))
+			return
+		}
+		curSt, _, err := p.ReadDevice(a)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		a.mu.RLock()
+		if a.editorProfileIndex < 0 || a.editorProfileIndex >= len(a.config.Profiles) {
+			a.mu.RUnlock()
+			writeError(w, fmt.Errorf("編集中のプロファイルがありません。"))
+			return
+		}
+		prof := a.config.Profiles[a.editorProfileIndex]
+		a.mu.RUnlock()
+
+		scope := strings.TrimSpace(req.Scope)
+		if scope == "" {
+			scope = "ext4"
+		}
+		btns, writtenLabels, convertedIdx := planSinoWealthDirectWriteFromProfile(prof, curSt.Buttons, scope)
+		if len(writtenLabels) == 0 {
+			writeError(w, fmt.Errorf("プロファイル「%s」に本体直書きできる単押しルール（右サイド / DPI± / 左サイドのキー出力）が見つかりませんでした。", prof.Name))
+			return
+		}
+		st, err := p.WriteButtons(a, btns)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		if req.DisableConvertedRules && len(convertedIdx) > 0 {
+			a.mu.Lock()
+			if a.editorProfileIndex >= 0 && a.editorProfileIndex < len(a.config.Profiles) {
+				rules := &a.config.Profiles[a.editorProfileIndex].Rules
+				for _, rIdx := range convertedIdx {
+					if rIdx >= 0 && rIdx < len(*rules) {
+						(*rules)[rIdx].Enabled = false
+					}
+				}
+				_ = a.saveConfigLocked()
+				a.rebuildRulesWithoutJoyConRescanLocked()
+				a.postUIRefreshLocked()
+			}
+			a.mu.Unlock()
+		}
+		resp := p.buildWebPayload(a, &st)
+		resp["written"] = writtenLabels
+		resp["message"] = fmt.Sprintf("プロファイル「%s」の設定をマウス本体へ直書きしました: %s", prof.Name, strings.Join(writtenLabels, " / "))
+		resp["state"] = a.buildWebState()
 		writeJSON(w, resp)
 
 	case "write-config":
@@ -415,7 +642,7 @@ function renderDPITable(dev){
   const tbody = $('swDPIRows');
   if(!tbody) return;
   tbody.innerHTML = '';
-  const maxDpi = (dev && dev.maxDpi) || 12000;
+  const maxDpi = (dev && dev.sensorType === 6) ? 24000 : ((dev && dev.maxDpi) || 12000);
   swDPIDraft.forEach((slot, idx) => {
     const tr = document.createElement('tr');
     const isActive = dev && Number($('swActiveDPI').value) === idx;
@@ -476,10 +703,12 @@ function ensureHost(){
         '</div>' +
 
         '<div class="sw-block">' +
-          '<div class="sw-block-head"><div><b>MouseButtonMapper 連携ワンクリック最適化</b><div class="muted">Windows の隠しショートカット（Win+F16 シャットダウン等）と衝突しない F13 / F18 / F19 / F20 へ安全に書き換えます（センサー設定には触れません）。</div></div></div>' +
+          '<div class="sw-block-head"><div><b>MouseButtonMapper 連携 ＆ 本体直書きワンクリックモード</b><div class="muted">ソフト連携用の安全な F13 / F18 / F19 / F20 化、または現在プロファイルのショートカットをマウス本体メモリへ直接書き込み（管理者アプリ・他PCでも動作）できます。</div></div></div>' +
           '<div class="toolbar">' +
-            '<button type="button" id="swPresetSide" data-sw-act="1" class="primary">右サイド2ボタンを F13 / F18 に最適化（推奨）</button>' +
-            '<button type="button" id="swPresetAll" data-sw-act="1">右サイド(F13/F18) ＋ DPI±(F19/F20) 全9ボタン化</button>' +
+            '<button type="button" id="swPresetSide" data-sw-act="1" class="primary">右サイド2ボタンを F13 / F18 に最適化</button>' +
+            '<button type="button" id="swPresetAll" data-sw-act="1">拡張4ボタンを安全キー(F13/F18/F19/F20)化</button>' +
+            '<button type="button" id="swDirectExt4" data-sw-act="1" class="primary">現在プロファイルの拡張4ボタンを本体直書き（ハイブリッド）</button>' +
+            '<button type="button" id="swDirectAll" data-sw-act="1">左サイド含め全単押しを本体直書き（ソフト不要）</button>' +
             '<button type="button" id="swPresetFactory" data-sw-act="1">Ray Pawn+ 標準ボタン配置に戻す</button>' +
           '</div>' +
         '</div>' +
@@ -521,9 +750,10 @@ function ensureHost(){
             '<div class="row" style="margin-bottom:10px">' +
               '<div class="field"><label for="swReportRate">ポーリングレート</label><select id="swReportRate"><option value="125">125 Hz</option><option value="250">250 Hz</option><option value="500">500 Hz</option><option value="1000">1000 Hz</option></select></div>' +
               '<div class="field"><label for="swActiveDPI">アクティブ DPI スロット</label><select id="swActiveDPI"><option value="0">#1</option><option value="1">#2</option><option value="2">#3</option><option value="3">#4</option><option value="4">#5</option><option value="5">#6</option><option value="6">#7</option><option value="7">#8</option></select></div>' +
-              '<div class="field"><label for="swRGBMode">LED エフェクト</label><select id="swRGBMode"><option value="-1">変更しない</option><option value="0">OFF (消灯)</option><option value="1">Rainbow</option><option value="2">単色点灯</option><option value="3">7色ブリージング</option><option value="4">Tail</option><option value="5">スペクトラム</option><option value="9">Wave</option></select></div>' +
+              '<div class="field"><label for="swRGBMode">LED エフェクト（全11種）</label><select id="swRGBMode"><option value="-1">変更しない</option><option value="0">0: OFF (消灯)</option><option value="1">1: カラフルストリーミング</option><option value="2">2: 単色点灯 (Steady)</option><option value="3">3: ブリージング (Breathing)</option><option value="4">4: カラフルテイル (Tail)</option><option value="5">5: ネオン (Neon)</option><option value="6">6: カラフル常時点灯</option><option value="7">7: フリッカー (Flicker)</option><option value="8">8: スター (Stars Twinkle)</option><option value="9">9: ウェーブ (Wave)</option><option value="10">10: リアクション (Reaction)</option></select></div>' +
               '<div class="field"><label for="swSingleColor">本体LED単色</label><input type="color" id="swSingleColor" value="#0000FF"></div>' +
-              '<div class="field"><label for="swColorOrder">LED色順 (緑⇔青が逆ならRBG)</label><select id="swColorOrder"><option value="RGB">RGB (標準)</option><option value="RBG">RBG (G/B入替)</option></select></div>' +
+              '<div class="field"><label for="swBrightness">LED 輝度</label><select id="swBrightness"><option value="1">1 (暗め)</option><option value="2">2 (標準)</option><option value="3">3 (明るめ)</option><option value="4">4 (最大)</option></select></div>' +
+              '<div class="field"><label for="swColorOrder">LED色順 (標準RGB)</label><select id="swColorOrder"><option value="RGB">RGB (公式標準)</option><option value="RBG">RBG (G/B入替)</option></select></div>' +
             '</div>' +
             '<div class="tablewrap"><table><thead><tr><th class="num">#</th><th class="check">有効</th><th>DPI</th><th>色</th><th>状態</th></tr></thead><tbody id="swDPIRows"></tbody></table></div>' +
           '</div>' +
@@ -545,6 +775,15 @@ function ensureHost(){
     swDirtyButtons=false;
     swFetch('POST', {op:'apply-preset', preset:'mbm-all-f13-f16'});
   });
+  $('swDirectExt4').addEventListener('click', () => {
+    swDirtyButtons=false;
+    swFetch('POST', {op:'write-profile-direct', scope:'ext4', disableConvertedRules:true});
+  });
+  $('swDirectAll').addEventListener('click', () => {
+    if(!confirm('左サイド(X1/X2)も含めて単押しルールをマウス本体へ直書きします。X1/X2の同時押しショートカットは使えなくなりますがよろしいですか？（いつでも元に戻せます）')) return;
+    swDirtyButtons=false;
+    swFetch('POST', {op:'write-profile-direct', scope:'all', disableConvertedRules:true});
+  });
   $('swPresetFactory').addEventListener('click', () => {
     swDirtyButtons=false;
     swFetch('POST', {op:'apply-preset', preset:'factory-pawn-plus'});
@@ -564,7 +803,7 @@ function ensureHost(){
         dpiSlots: swDPIDraft,
         rgbEffectMode: rgbMode,
         singleColor: $('swSingleColor').value,
-        singleBrightness: 4,
+        singleBrightness: Number($('swBrightness').value) || 4,
         syncActiveDpiColor: rgbMode === 2,
         colorOrder: $('swColorOrder').value
       }
@@ -595,7 +834,7 @@ function ensureHost(){
       swDirtyLink = true;
     });
   });
-  ['swReportRate','swActiveDPI','swRGBMode','swSingleColor'].forEach(id => {
+  ['swReportRate','swActiveDPI','swRGBMode','swSingleColor','swBrightness'].forEach(id => {
     $(id).addEventListener('change', () => { swDirtyConfig = true; if(id==='swActiveDPI') renderDPITable(swData && swData.device); });
     $(id).addEventListener('input', () => { swDirtyConfig = true; });
   });
@@ -650,6 +889,7 @@ function render(){
     $('swActiveDPI').value = String(dev.activeDpiIndex || 0);
     $('swRGBMode').value = String(dev.rgbEffectMode != null ? dev.rgbEffectMode : -1);
     $('swSingleColor').value = (dev.singleColor && /^#[0-9a-fA-F]{6}$/.test(dev.singleColor)) ? dev.singleColor : '#0000FF';
+    $('swBrightness').value = String(dev.singleBrightness >= 1 && dev.singleBrightness <= 4 ? dev.singleBrightness : 4);
     swDPIDraft = (dev.dpiSlots || []).map(s => Object.assign({}, s));
     renderDPITable(dev);
   }

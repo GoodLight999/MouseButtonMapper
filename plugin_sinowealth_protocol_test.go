@@ -172,3 +172,58 @@ func TestSingleDPIBlueAndRBGColorOrder(t *testing.T) {
 		t.Fatalf("RBG roundtrip failed: err=%v color=%q", err, st.SingleColor)
 	}
 }
+
+func TestSinoWealthOfficialCfgAdditions(t *testing.T) {
+	// 1. Official PMW3360 24000 DPI (DPIHW=120 / 0x78) roundtrip
+	raw, err := sinoWealthDPIToRaw(sinoWealthSensorPMW3360, 24000)
+	if err != nil || raw != 120 {
+		t.Fatalf("24000 DPI -> (%d, %v), want (120, nil)", raw, err)
+	}
+	if dpi := sinoWealthRawToDPI(sinoWealthSensorPMW3360, 120); dpi != 24000 {
+		t.Fatalf("raw 120 -> %d DPI, want 24000", dpi)
+	}
+
+	// 2. VK -> HID mapping for shortcuts (Ctrl+A, Ctrl+X, Win+V, Win+H, F13..F20)
+	vkCases := []struct {
+		vk        uint32
+		wantUsage uint8
+		wantMod   uint8
+	}{
+		{0x11, 0x00, 0x01}, // Ctrl
+		{0x5B, 0x00, 0x08}, // LWin
+		{'A', 0x04, 0x00},
+		{'X', 0x1B, 0x00},
+		{'V', 0x19, 0x00},
+		{'H', 0x0B, 0x00},
+		{0x7C, 0x68, 0x00}, // F13
+		{0x83, 0x6F, 0x00}, // F20
+	}
+	for _, tc := range vkCases {
+		u, m, ok := sinoWealthVKToHID(tc.vk)
+		if !ok || u != tc.wantUsage || m != tc.wantMod {
+			t.Fatalf("vk 0x%X -> (u=0x%X, m=0x%X, ok=%v) want (0x%X, 0x%X, true)", tc.vk, u, m, ok, tc.wantUsage, tc.wantMod)
+		}
+	}
+
+	// 3. Safety guard: rejecting button write that removes all Left Click buttons (tc_ms12)
+	_, origBtn := mustRealPawnPlusDumps(t)
+	if _, err := buildSinoWealthButtonsWriteReport(origBtn, []SinoWealthButtonAction{
+		{Index: 0, Kind: "mouse", Value: "right"},
+	}); err == nil {
+		t.Fatal("expected error when removing last Left Click button")
+	}
+
+	// 4. LED Reaction mode (10 / 0x0A) and brightness-only update (0x38)
+	origCfg, _ := mustRealPawnPlusDumps(t)
+	out, err := buildSinoWealthConfigWriteReport(origCfg, SinoWealthConfigPatch{
+		ActiveDPIIndex:   -1,
+		RGBEffectMode:    10,
+		SingleBrightness: 2,
+	})
+	if err != nil {
+		t.Fatalf("reaction + brightness patch: %v", err)
+	}
+	if out[0x35] != 0x2A || out[0x38] != 0x20 {
+		t.Fatalf("got mode=0x%02x bright=0x%02x want 0x2A / 0x20", out[0x35], out[0x38])
+	}
+}
