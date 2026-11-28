@@ -98,3 +98,21 @@ func TestForegroundMatchTargetNeedsHistoryForSettings(t *testing.T) {
 		t.Fatalf("unexpected target without history: reused=%v got=%+v", reused, got)
 	}
 }
+
+func TestIsExactSettingsWindowTitleDoesNotFalsePositiveOnBrowserTabs(t *testing.T) {
+	if !isExactSettingsWindowTitle("MouseButtonMapper") {
+		t.Fatal("exact app title must match")
+	}
+	if !isExactSettingsWindowTitle("MouseButtonMapper 設定") {
+		t.Fatal("japanese settings title must match")
+	}
+	for _, unrelated := range []string{
+		"GitHub - GoodLight999/MouseButtonMapper - Vivaldi",
+		"MouseButtonMapper - Visual Studio Code",
+		"T3 Code (Beta) - MouseButtonMapper",
+	} {
+		if isExactSettingsWindowTitle(unrelated) {
+			t.Fatalf("unrelated window title %q must not be treated as settings UI", unrelated)
+		}
+	}
+}

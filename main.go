@@ -545,12 +545,14 @@ type Config struct {
 	Profiles        []Profile               `json:"Profiles"`
 	AutoSwitch      AutoSwitchConfig        `json:"AutoSwitch,omitempty"`
 	Controller      ControllerFeatureConfig `json:"Controller,omitempty"`
+	Plugins         PluginsConfig           `json:"Plugins,omitempty"`
 }
 type Profile struct {
-	Id     string              `json:"Id"`
-	Name   string              `json:"Name"`
-	Rules  []Rule              `json:"Rules"`
-	JoyCon JoyConProfileConfig `json:"JoyCon,omitempty"`
+	Id         string                 `json:"Id"`
+	Name       string                 `json:"Name"`
+	Rules      []Rule                 `json:"Rules"`
+	JoyCon     JoyConProfileConfig    `json:"JoyCon,omitempty"`
+	SinoWealth SinoWealthHardwareLink `json:"SinoWealth,omitempty"`
 }
 type Rule struct {
 	Enabled          bool   `json:"Enabled"`
@@ -595,11 +597,14 @@ type App struct {
 	controllerPending    map[string]bool
 	controllerConsumed   map[string]bool
 	controllerHoldRules  map[string]Rule
+	activeHoldRules      map[string]Rule
+	heldMouseRefs        map[string]int
 	lastControllerInput  Item
 	lastControllerSource string
 	pendingTap           map[string]bool
 	consumedPrefix       map[string]bool
 	suppressedDown       map[string]bool
+	suppressedKeyDown    map[uint32]bool
 	longPress            map[string]*longPressState
 	longPressSeq         uint64
 
@@ -614,6 +619,9 @@ type App struct {
 	xInputCancel             func()
 	xInputDone               chan struct{}
 	xInputStatus             XInputConnectionStatus
+
+	plugins               *pluginRegistry
+	lastNotifiedProfileID string
 
 	sendMu                  sync.Mutex
 	hookMu                  sync.RWMutex
@@ -632,6 +640,7 @@ type App struct {
 	outputDropped           atomic.Uint64
 	rehookPending           atomic.Bool
 	shuttingDown            atomic.Bool
+	injectingCtrl           atomic.Bool
 	hwnd                    uintptr
 	ctrlList                uintptr
 	ctrlStatus              uintptr
@@ -728,7 +737,7 @@ type App struct {
 	autoBlockedSince        time.Time
 }
 
-var app = &App{enabled: true, foregroundMonitorStatus: "起動準備中", mouseDown: map[string]bool{}, mouseDownAt: map[string]time.Time{}, keyDown: map[uint32]bool{}, controllerDown: map[string]bool{}, controllerPending: map[string]bool{}, controllerConsumed: map[string]bool{}, controllerHoldRules: map[string]Rule{}, pendingTap: map[string]bool{}, consumedPrefix: map[string]bool{}, suppressedDown: map[string]bool{}, longPress: map[string]*longPressState{}, joyConOutputRefs: map[uint32]joyConOutputReference{}, joyConStatus: JoyConConnectionStatus{BatteryPercent: -1}, logCh: make(chan string, 4096), recordHeld: map[string]bool{}, recordingRuleIndex: -1, actionCh: make(chan outputJob, 8192), configSaveCh: make(chan []byte, 8), shutdownCh: make(chan struct{}), hookReady: make(chan struct{}), hookDone: make(chan struct{}), foregroundEventCh: make(chan uintptr, 32)}
+var app = &App{enabled: true, foregroundMonitorStatus: "起動準備中", mouseDown: map[string]bool{}, mouseDownAt: map[string]time.Time{}, keyDown: map[uint32]bool{}, controllerDown: map[string]bool{}, controllerPending: map[string]bool{}, controllerConsumed: map[string]bool{}, controllerHoldRules: map[string]Rule{}, activeHoldRules: map[string]Rule{}, heldMouseRefs: map[string]int{}, pendingTap: map[string]bool{}, consumedPrefix: map[string]bool{}, suppressedDown: map[string]bool{}, suppressedKeyDown: map[uint32]bool{}, longPress: map[string]*longPressState{}, joyConOutputRefs: map[uint32]joyConOutputReference{}, joyConStatus: JoyConConnectionStatus{BatteryPercent: -1}, logCh: make(chan string, 4096), recordHeld: map[string]bool{}, recordingRuleIndex: -1, actionCh: make(chan outputJob, 8192), configSaveCh: make(chan []byte, 8), shutdownCh: make(chan struct{}), hookReady: make(chan struct{}), hookDone: make(chan struct{}), foregroundEventCh: make(chan uintptr, 32)}
 
 func main() {
 	if hasCommandLineFlag("--self-test", "/self-test") {
@@ -745,6 +754,8 @@ func main() {
 	defer pCoUninitialize.Call()
 	parseArgs()
 	app.initPaths()
+	swPlugin := newSinoWealthPlugin()
+	app.plugins = newPluginRegistry(swPlugin)
 	pid, _, _ := pGetCurrentProcessId.Call()
 	app.currentPID = uint32(pid)
 	if app.startedSafe {
@@ -759,6 +770,7 @@ func main() {
 	if err := app.ensureConfig(); err != nil {
 		app.logf("ensure config error: %v", err)
 	}
+	go swPlugin.Warmup(app)
 	if err := app.loadConfig(); err != nil {
 		app.logf("load config error: %v", err)
 		messageBox("設定読み込みエラー", fmt.Sprintf("設定を読み込めませんでした。\n%v\n\n安全のため、初期設定で停止状態起動します。", err))
@@ -1028,12 +1040,14 @@ func readForegroundAppFromHWND(hwnd uintptr, previous ForegroundAppInfo, source 
 	if previous.PID == pid && previous.Path != "" {
 		info.Path = previous.Path
 		info.ProcessName = previous.ProcessName
+		info.Elevated = previous.Elevated
 	} else {
 		info.Path = processImagePath(pid)
 		info.ProcessName = baseNameAnySeparator(info.Path)
 		if info.ProcessName == "" {
 			info.ProcessName = processNameFromSnapshot(pid)
 		}
+		info.Elevated = isProcessElevated(pid)
 	}
 	return info
 }
@@ -1046,7 +1060,7 @@ func (a *App) isSettingsWindowLocked(info ForegroundAppInfo) bool {
 	if info.PID != 0 && info.PID == a.currentPID {
 		return true
 	}
-	return strings.Contains(strings.ToLower(info.Title), strings.ToLower(appName))
+	return isExactSettingsWindowTitle(info.Title)
 }
 
 func pumpThreadMessages() {
@@ -1264,7 +1278,7 @@ func (a *App) evaluateForegroundApp(observed ForegroundAppInfo) {
 		a.updateAutoDecisionLocked("match:"+candidateKey, "一致: "+binding.Name, detail, now)
 	} else {
 		detail := contextDetail + fmt.Sprintf("%s に一致する有効な自動切替ルールはありません。", matchInfo.ProcessName)
-		a.updateAutoDecisionLocked("nomatch:"+strings.ToLower(matchInfo.ProcessName)+"|"+matchInfo.Title, "一致なし: 通常時プロファイルを使用", detail, now)
+		a.updateAutoDecisionLocked("nomatch:"+strings.ToLower(matchInfo.ProcessName), "一致なし: 通常時プロファイルを使用", detail, now)
 	}
 
 	debounce := time.Duration(a.config.AutoSwitch.DebounceMs) * time.Millisecond
@@ -1517,6 +1531,7 @@ func normalizeConfig(cfg Config) Config {
 func (a *App) applyConfig(cfg Config) {
 	a.mu.Lock()
 	a.abortAllLongPressLocked("configuration reloaded", false)
+	a.releaseActiveHoldsLocked("configuration reloaded")
 	a.clearJoyConInputStateLocked("configuration reloaded")
 	cfg = normalizeConfig(cfg)
 	a.config = cfg
@@ -1573,10 +1588,25 @@ func asyncKeyDown(vk uint32) bool {
 // a boundary check so one stale map entry cannot block automatic switching
 // forever.
 func (a *App) reconcilePhysicalStateLocked() {
+	now := time.Now()
 	for btn := range a.mouseDown {
+		trig := Item{Kind: "Mouse", Code: btn}
+		lpKey := longPressKey(trig)
+		// Buttons suppressed by WH_MOUSE_LL (Hold, LongPress, or chord prefixes like X1/X2)
+		// never set GetAsyncKeyState's high bit. Do not evict them based on GetAsyncKeyState,
+		// otherwise a foreground change (such as switching Virtual Desktops while holding X2)
+		// drops mouseDown mid-chord and prevents scrolling back.
+		if a.hasActiveHoldLocked(trig) || a.longPress[lpKey] != nil {
+			continue
+		}
+		if a.suppressedDown[btn] || a.pendingTap[btn] || a.consumedPrefix[btn] {
+			if downAt, ok := a.mouseDownAt[btn]; !ok || now.Sub(downAt) < 15*time.Second {
+				continue
+			}
+		}
 		if !asyncKeyDown(mouseButtonVK(btn)) {
-			a.abortLongPressForTriggerLocked(Item{Kind: "Mouse", Code: btn}, "missed mouse-up repaired")
-			delete(a.longPress, longPressKey(Item{Kind: "Mouse", Code: btn}))
+			a.abortLongPressForTriggerLocked(trig, "missed mouse-up repaired")
+			delete(a.longPress, lpKey)
 			delete(a.mouseDown, btn)
 			delete(a.mouseDownAt, btn)
 			delete(a.pendingTap, btn)
@@ -1588,10 +1618,19 @@ func (a *App) reconcilePhysicalStateLocked() {
 		if vk == VK_CONTROL || vk == VK_SHIFT || vk == VK_MENU {
 			continue
 		}
+		trig := Item{Kind: "Key", Code: strconv.Itoa(int(vk))}
+		lpKey := longPressKey(trig)
+		// Keys suppressed by WH_KEYBOARD_LL (e.g. F13..F24 mapped to Hold/LongPress/Tap)
+		// are never reported as down by GetAsyncKeyState. Do not evict them mid-hold,
+		// otherwise the next OS key-repeat would re-fire HoldDown and leak stuck modifiers.
+		if a.hasActiveHoldLocked(trig) || a.longPress[lpKey] != nil || a.suppressedKeyDown[vk] {
+			continue
+		}
 		if !asyncKeyDown(vk) {
-			a.abortLongPressForTriggerLocked(Item{Kind: "Key", Code: strconv.Itoa(int(vk))}, "missed key-up repaired")
-			delete(a.longPress, longPressKey(Item{Kind: "Key", Code: strconv.Itoa(int(vk))}))
+			a.abortLongPressForTriggerLocked(trig, "missed key-up repaired")
+			delete(a.longPress, lpKey)
 			delete(a.keyDown, vk)
+			delete(a.suppressedKeyDown, vk)
 		}
 	}
 	if !asyncKeyDown(VK_LCONTROL) && !asyncKeyDown(VK_RCONTROL) {
@@ -1684,6 +1723,10 @@ func (a *App) rebuildRulesLockedWithJoyConRescan(rescanJoyCon bool) {
 	a.rules = rules
 	if rescanJoyCon {
 		a.requestJoyConRescanLocked()
+	}
+	if a.plugins != nil && prof.Id != a.lastNotifiedProfileID {
+		a.lastNotifiedProfileID = prof.Id
+		a.plugins.NotifyEffectiveProfile(a, prof)
 	}
 }
 
@@ -1823,7 +1866,9 @@ func (a *App) reinstallHooksCurrent(reason string) {
 	a.pendingTap = map[string]bool{}
 	a.consumedPrefix = map[string]bool{}
 	a.suppressedDown = map[string]bool{}
+	a.suppressedKeyDown = map[uint32]bool{}
 	a.abortAllLongPressLocked("hooks reinstalled", true)
+	a.releaseActiveHoldsLocked("hooks reinstalled")
 	a.clearJoyConInputStateLocked("hooks reinstalled")
 	a.requestJoyConRescanLocked()
 	if a.recordingMode != "" {
@@ -1872,6 +1917,18 @@ func getLastInputTick() (uint32, bool) {
 	return li.DwTime, r != 0
 }
 
+func (a *App) hasAnyMouseDown() bool {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return len(a.mouseDown) > 0
+}
+
+func (a *App) isForegroundElevatedCached() bool {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.foregroundApp.Elevated
+}
+
 func (a *App) hookWatchdog() {
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
@@ -1881,6 +1938,8 @@ func (a *App) hookWatchdog() {
 	var lastCursor POINT
 	pGetCursorPos.Call(uintptr(unsafe.Pointer(&lastCursor)))
 	lastRequest := time.Time{}
+	lastUIPIAt := time.Time{}
+	consecutiveMissing := 0
 	for {
 		select {
 		case <-a.hookDone:
@@ -1892,6 +1951,7 @@ func (a *App) hookWatchdog() {
 		a.hookMu.RUnlock()
 		if (mh == 0 || kh == 0) && time.Since(lastRequest) > 5*time.Second {
 			lastRequest = time.Now()
+			consecutiveMissing = 0
 			a.requestHookReinstall("hook handle is zero")
 		}
 
@@ -1900,17 +1960,41 @@ func (a *App) hookWatchdog() {
 		curMouseSeq := a.mouseEventSeq.Load()
 		var curCursor POINT
 		pGetCursorPos.Call(uintptr(unsafe.Pointer(&curCursor)))
+
+		if isUIPIBlockingHook(curCursor) || a.isForegroundElevatedCached() {
+			lastUIPIAt = time.Now()
+			consecutiveMissing = 0
+			lastInput = curInput
+			lastAnySeq = curAnySeq
+			lastMouseSeq = curMouseSeq
+			lastCursor = curCursor
+			continue
+		}
+
 		cursorMoved := curCursor != lastCursor
 		missingAll := ok && curInput != lastInput && curAnySeq == lastAnySeq
 		missingMouse := cursorMoved && curMouseSeq == lastMouseSeq
-		if (missingAll || missingMouse) && time.Since(lastRequest) > 5*time.Second {
-			// OS側では入力またはカーソル移動が進んだのに、当該フックのコールバックが進んでいない。
-			// タイムアウトによる無言解除を短く再確認してから再フックする。
+		if missingAll || missingMouse {
+			if time.Since(lastUIPIAt) < 4*time.Second || a.hasAnyMouseDown() {
+				// Recent elevated window (e.g. Voicemeeter during Virtual Desktop switch)
+				// or active mouse chord: reset baseline and never falsely rehook.
+				consecutiveMissing = 0
+			} else {
+				consecutiveMissing++
+			}
+		} else {
+			consecutiveMissing = 0
+		}
+
+		if consecutiveMissing >= 2 && time.Since(lastRequest) > 5*time.Second {
+			// OS側では非UIPI環境で2秒連続して入力またはカーソル移動が進んだのに、
+			// 当該フックのコールバックが進んでいない。短く再確認してから再フックする。
 			time.Sleep(80 * time.Millisecond)
 			stillMissingAll := missingAll && a.hookEventSeq.Load() == curAnySeq
 			stillMissingMouse := missingMouse && a.mouseEventSeq.Load() == curMouseSeq
-			if stillMissingAll || stillMissingMouse {
+			if (stillMissingAll || stillMissingMouse) && !isUIPIBlockingHook(curCursor) && !a.hasAnyMouseDown() {
 				lastRequest = time.Now()
+				consecutiveMissing = 0
 				reason := "system input advanced but hook callbacks did not"
 				if stillMissingMouse {
 					reason = "cursor moved but mouse hook callback did not"
@@ -1949,6 +2033,9 @@ func (a *App) messageLoop() {
 	}
 }
 func (a *App) cleanup() {
+	if a.plugins != nil {
+		a.plugins.ShutdownAll()
+	}
 	a.stopXInputSubsystem()
 	a.stopJoyConSubsystem()
 	// タイマーやUI処理が終了処理と競合しても、終了開始後に新しい入力を
@@ -1958,6 +2045,7 @@ func (a *App) cleanup() {
 	a.shuttingDown.Store(true)
 	a.mu.Lock()
 	a.abortAllLongPressLocked("application exit", true)
+	a.releaseActiveHoldsLocked("application exit")
 	a.clearJoyConInputStateLocked("application exit")
 	a.mu.Unlock()
 	a.sendMu.Lock()
@@ -2040,6 +2128,7 @@ func (a *App) handleKeyEvent(vk uint32, isDown bool) bool {
 	emergency := isDown && vk == VK_F12 && (a.keyDown[VK_CONTROL] || a.keyDown[VK_LCONTROL] || a.keyDown[VK_RCONTROL]) && (a.keyDown[VK_SHIFT] || a.keyDown[VK_LSHIFT] || a.keyDown[VK_RSHIFT]) && (a.keyDown[VK_MENU] || a.keyDown[VK_LMENU] || a.keyDown[VK_RMENU])
 	if emergency {
 		a.abortAllLongPressLocked("emergency stop", false)
+		a.releaseActiveHoldsLocked("emergency stop")
 		a.clearJoyConInputStateLocked("emergency stop")
 		a.recordingMode = ""
 		a.recordingRuleIndex = -1
@@ -2071,19 +2160,35 @@ func (a *App) handleKeyEvent(vk uint32, isDown bool) bool {
 	}
 
 	if !isDown {
+		wasSuppressed := a.suppressedKeyDown[vk]
+		delete(a.suppressedKeyDown, vk)
+		holdKey := longPressKey(it)
+		if holdRule, ok := a.activeHoldRules[holdKey]; ok {
+			delete(a.activeHoldRules, holdKey)
+			a.mu.Unlock()
+			a.enqueueRuleGuaranteed(joyConHoldPhaseRule(holdRule, false))
+			return holdRule.SuppressTrigger || wasSuppressed
+		}
 		completion := a.finishLongPressLocked(it)
 		a.mu.Unlock()
 		if completion.HasRule {
 			a.enqueueRuleGuaranteed(completion.Rule)
 		}
 		if completion.Handled {
-			return completion.Suppress
+			return completion.Suppress || wasSuppressed
 		}
-		return false
+		return wasSuppressed
+	}
+
+	holdKey := longPressKey(it)
+	if holdRule, ok := a.activeHoldRules[holdKey]; ok {
+		suppress := holdRule.SuppressTrigger || a.suppressedKeyDown[vk]
+		a.mu.Unlock()
+		return suppress
 	}
 
 	if wasDown {
-		suppress := a.longPressSuppressedLocked(it)
+		suppress := a.longPressSuppressedLocked(it) || a.suppressedKeyDown[vk]
 		a.mu.Unlock()
 		return suppress
 	}
@@ -2096,18 +2201,47 @@ func (a *App) handleKeyEvent(vk uint32, isDown bool) bool {
 	if ok && len(rule.Input) > 1 {
 		a.markPrefixesConsumedLocked(rule)
 	}
+	if ok && isJoyConHoldRule(rule) {
+		if a.activeHoldRules == nil {
+			a.activeHoldRules = map[string]Rule{}
+		}
+		a.activeHoldRules[holdKey] = rule
+		if rule.SuppressTrigger {
+			if a.suppressedKeyDown == nil {
+				a.suppressedKeyDown = map[uint32]bool{}
+			}
+			a.suppressedKeyDown[vk] = true
+		}
+		a.mu.Unlock()
+		a.enqueueRuleGuaranteed(joyConHoldPhaseRule(rule, true))
+		return rule.SuppressTrigger
+	}
 	if ok && rule.LongPressEnabled {
 		started := a.startLongPressLocked(rule, it)
+		if started && rule.SuppressTrigger {
+			if a.suppressedKeyDown == nil {
+				a.suppressedKeyDown = map[uint32]bool{}
+			}
+			a.suppressedKeyDown[vk] = true
+		}
 		a.mu.Unlock()
 		return started && rule.SuppressTrigger
 	}
-	a.mu.Unlock()
 	if ok {
 		if a.enqueueRule(rule) {
+			if rule.SuppressTrigger {
+				if a.suppressedKeyDown == nil {
+					a.suppressedKeyDown = map[uint32]bool{}
+				}
+				a.suppressedKeyDown[vk] = true
+			}
+			a.mu.Unlock()
 			return rule.SuppressTrigger
 		}
+		a.mu.Unlock()
 		return false
 	}
+	a.mu.Unlock()
 	return false
 }
 func (a *App) anySpecificModDown(generic uint32) bool {
@@ -2183,14 +2317,15 @@ func (a *App) buttonDown(btn string) bool {
 	if wasDown {
 		age := now.Sub(a.mouseDownAt[btn])
 		staleAfter := 2 * time.Second
-		if a.longPress[longPressKey(trigger)] != nil {
+		if a.longPress[longPressKey(trigger)] != nil || a.hasActiveHoldLocked(trigger) {
 			// 長押し中のゲーミングマウスがDOWNを再送しても、正当な押下を
-			// UP欠落と誤認しない。長押し状態がある場合だけ猶予を広げる。
+			// UP欠落と誤認しない。長押し・Hold状態がある場合だけ猶予を広げる。
 			staleAfter = 10 * time.Second
 		}
 		if age > staleAfter {
 			// UP欠落後に次のDOWNが来た場合、永久に「押下中」のまま固まらないよう自己修復する。
 			a.abortLongPressForTriggerLocked(trigger, "stale mouse-down recovered")
+			a.releaseActiveHoldForTriggerLocked(trigger)
 			delete(a.longPress, longPressKey(trigger))
 			delete(a.pendingTap, btn)
 			delete(a.consumedPrefix, btn)
@@ -2203,8 +2338,8 @@ func (a *App) buttonDown(btn string) bool {
 	a.mouseDownAt[btn] = now
 	if wasDown {
 		// 一部のゲーミングマウス/ドライバは押しっぱなし中にDOWNを再送する。
-		// Tap/長押しルールを重複発火させず、既に抑制中のボタンだけ同じ扱いを続ける。
-		suppress := !isPrimaryButton(btn) && (a.suppressedDown[btn] || a.pendingTap[btn] || a.consumedPrefix[btn] || a.longPressSuppressedLocked(trigger))
+		// Tap/長押し/Holdルールを重複発火させず、既に抑制中のボタンだけ同じ扱いを続ける。
+		suppress := !isPrimaryButton(btn) && (a.suppressedDown[btn] || a.pendingTap[btn] || a.consumedPrefix[btn] || a.longPressSuppressedLocked(trigger) || a.hasActiveHoldLocked(trigger))
 		a.mu.Unlock()
 		return suppress
 	}
@@ -2224,6 +2359,18 @@ func (a *App) buttonDown(btn string) bool {
 	rule, matched := a.findBestTriggerLocked(trigger)
 	if matched && len(rule.Input) > 1 {
 		a.markPrefixesConsumedLocked(rule)
+	}
+	if matched && isJoyConHoldRule(rule) {
+		if a.activeHoldRules == nil {
+			a.activeHoldRules = map[string]Rule{}
+		}
+		a.activeHoldRules[longPressKey(trigger)] = rule
+		if !isPrimaryButton(btn) && rule.SuppressTrigger {
+			a.suppressedDown[btn] = true
+		}
+		a.mu.Unlock()
+		a.enqueueRuleGuaranteed(joyConHoldPhaseRule(rule, true))
+		return !isPrimaryButton(btn) && rule.SuppressTrigger
 	}
 	if matched && rule.LongPressEnabled {
 		started := a.startLongPressLocked(rule, trigger)
@@ -2271,6 +2418,23 @@ func (a *App) buttonUp(btn string) bool {
 			go a.finishRecordingAuto()
 		}
 		return !isPrimaryButton(btn)
+	}
+
+	if holdRule, ok := a.activeHoldRules[longPressKey(trigger)]; ok {
+		suppressed := a.suppressedDown[btn]
+		consumed := a.consumedPrefix[btn]
+		delete(a.activeHoldRules, longPressKey(trigger))
+		delete(a.mouseDown, btn)
+		delete(a.mouseDownAt, btn)
+		delete(a.pendingTap, btn)
+		delete(a.consumedPrefix, btn)
+		delete(a.suppressedDown, btn)
+		a.mu.Unlock()
+		a.enqueueRuleGuaranteed(joyConHoldPhaseRule(holdRule, false))
+		if isPrimaryButton(btn) {
+			return false
+		}
+		return holdRule.SuppressTrigger || suppressed || consumed
 	}
 
 	completion := a.finishLongPressLocked(trigger)
@@ -2338,6 +2502,11 @@ func (a *App) wheel(dir string) bool {
 		}
 		return false
 	}
+	// Prevent a stray hardware wheel notch from combining with an in-flight injected Ctrl
+	// (e.g. during rapid X2+Wheel Virtual Desktop switching, which otherwise resizes Desktop icons).
+	if a.injectingCtrl.Load() {
+		return true
+	}
 	return false
 }
 
@@ -2361,10 +2530,40 @@ func (a *App) isSuppressPrefixButtonLocked(btn string) bool {
 	}
 	return false
 }
+func (a *App) hasActiveHoldLocked(it Item) bool {
+	if a.activeHoldRules == nil {
+		return false
+	}
+	_, ok := a.activeHoldRules[longPressKey(it)]
+	return ok
+}
+
+func (a *App) releaseActiveHoldForTriggerLocked(it Item) {
+	if a.activeHoldRules == nil {
+		return
+	}
+	key := longPressKey(it)
+	if holdRule, ok := a.activeHoldRules[key]; ok {
+		delete(a.activeHoldRules, key)
+		a.enqueueRuleGuaranteed(joyConHoldPhaseRule(holdRule, false))
+	}
+}
+
+func (a *App) releaseActiveHoldsLocked(reason string) {
+	if len(a.activeHoldRules) == 0 {
+		return
+	}
+	for key, holdRule := range a.activeHoldRules {
+		delete(a.activeHoldRules, key)
+		a.enqueueRuleGuaranteed(joyConHoldPhaseRule(holdRule, false))
+	}
+}
+
 func (a *App) markPrefixesConsumedLocked(r Rule) {
 	for i := 0; i < len(r.Input)-1; i++ {
 		it := r.Input[i]
 		a.abortLongPressForTriggerLocked(it, "input became a prefix of a longer rule")
+		a.releaseActiveHoldForTriggerLocked(it)
 		if strings.EqualFold(it.Kind, "Mouse") {
 			a.consumedPrefix[normMouse(it.Code)] = true
 		}
@@ -3701,9 +3900,9 @@ func mouseName(code string) string {
 	case "Middle":
 		return "中クリック"
 	case "X1":
-		return "サイド1"
+		return "左サイド1"
 	case "X2":
-		return "サイド2"
+		return "左サイド2"
 	case "WheelUp":
 		return "ホイール上"
 	case "WheelDown":
@@ -3712,6 +3911,9 @@ func mouseName(code string) string {
 	return code
 }
 func vkName(vk uint32) string {
+	if alias, ok := mouseAliasNameForVK(vk); ok {
+		return alias
+	}
 	switch genericVK(vk) {
 	case VK_CONTROL:
 		return "Ctrl"
@@ -3767,6 +3969,7 @@ func (a *App) handleCommand(id uint32) {
 		if a.enabled && !a.emergency {
 			a.enabled = false
 			a.abortAllLongPressLocked("conversion stopped", false)
+			a.releaseActiveHoldsLocked("conversion stopped")
 			a.clearJoyConInputStateLocked("conversion stopped")
 		} else {
 			a.enabled = true
@@ -4320,12 +4523,16 @@ func parseItemsText(text string, allowMouse bool, allowKey bool) ([]Item, error)
 			}
 		}
 		if allowKey {
+			if vk, ok := parseMouseAliasVK(tok); ok {
+				items = append(items, Item{Kind: "Key", Code: strconv.Itoa(int(vk))})
+				continue
+			}
 			if vk, ok := parseVK(tok); ok {
 				items = append(items, Item{Kind: "Key", Code: strconv.Itoa(int(vk))})
 				continue
 			}
 		}
-		return nil, fmt.Errorf("%q を解釈できません。例: サイド1 + ホイール上 / Ctrl + Win + ←", tok)
+		return nil, fmt.Errorf("%q を解釈できません。例: 左サイド1 + ホイール上 / 右サイド1 / Ctrl + Win + ←", tok)
 	}
 	return items, nil
 }
@@ -4376,9 +4583,9 @@ func parseMouseToken(tok string) (string, bool) {
 		return "Right", true
 	case "middle", "mbutton", "中クリック", "中":
 		return "Middle", true
-	case "x1", "back", "戻る", "side1", "サイド1", "サイドボタン1":
+	case "x1", "back", "戻る", "side1", "lside1", "leftside1", "サイド1", "サイドボタン1", "左サイド1", "左サイドボタン1":
 		return "X1", true
-	case "x2", "forward", "進む", "side2", "サイド2", "サイドボタン2":
+	case "x2", "forward", "進む", "side2", "lside2", "leftside2", "サイド2", "サイドボタン2", "左サイド2", "左サイドボタン2":
 		return "X2", true
 	case "wheelup", "wheel_up", "ホイール上", "上ホイール":
 		return "WheelUp", true
@@ -4515,6 +4722,7 @@ type webForegroundApp struct {
 	Path        string `json:"path"`
 	Title       string `json:"title"`
 	Source      string `json:"source"`
+	Elevated    bool   `json:"elevated"`
 	SeenAt      string `json:"seenAt"`
 }
 
@@ -4534,40 +4742,43 @@ type webAutoBinding struct {
 }
 
 type webState struct {
-	Version              string           `json:"version"`
-	ConfigPath           string           `json:"configPath"`
-	LogPath              string           `json:"logPath"`
-	UIURL                string           `json:"uiUrl"`
-	Enabled              bool             `json:"enabled"`
-	Emergency            bool             `json:"emergency"`
-	Status               string           `json:"status"`
-	ProfileName          string           `json:"profileName"`
-	BaseProfileName      string           `json:"baseProfileName"`
-	EditorProfileName    string           `json:"editorProfileName"`
-	ActiveProfile        int              `json:"activeProfile"`
-	BaseProfile          int              `json:"baseProfile"`
-	EffectiveProfile     int              `json:"effectiveProfile"`
-	Profiles             []webProfile     `json:"profiles"`
-	Rules                []webRule        `json:"rules"`
-	AutoSwitchEnabled    bool             `json:"autoSwitchEnabled"`
-	ControllerEnabled    bool             `json:"controllerEnabled"`
-	ControllerVisible    bool             `json:"controllerVisible"`
-	AutoDebounceMs       int              `json:"autoDebounceMs"`
-	AutoBindings         []webAutoBinding `json:"autoBindings"`
-	AutoMatchedBindingID string           `json:"autoMatchedBindingId"`
-	AutoMatchedName      string           `json:"autoMatchedName"`
-	AutoMonitorStatus    string           `json:"autoMonitorStatus"`
-	AutoDecision         string           `json:"autoDecision"`
-	AutoDecisionDetail   string           `json:"autoDecisionDetail"`
-	AutoDecisionAt       string           `json:"autoDecisionAt"`
-	AutoLastSwitchAt     string           `json:"autoLastSwitchAt"`
-	ForegroundApp        webForegroundApp `json:"foregroundApp"`
-	LastExternalApp      webForegroundApp `json:"lastExternalApp"`
-	RecordingMode        string           `json:"recordingMode"`
-	RecordedText         string           `json:"recordedText"`
-	LastInput            string           `json:"lastInput"`
-	LastInputAt          string           `json:"lastInputAt"`
-	HookStatus           string           `json:"hookStatus"`
+	Version              string               `json:"version"`
+	ConfigPath           string               `json:"configPath"`
+	LogPath              string               `json:"logPath"`
+	UIURL                string               `json:"uiUrl"`
+	Enabled              bool                 `json:"enabled"`
+	Emergency            bool                 `json:"emergency"`
+	Status               string               `json:"status"`
+	ProfileName          string               `json:"profileName"`
+	BaseProfileName      string               `json:"baseProfileName"`
+	EditorProfileName    string               `json:"editorProfileName"`
+	ActiveProfile        int                  `json:"activeProfile"`
+	BaseProfile          int                  `json:"baseProfile"`
+	EffectiveProfile     int                  `json:"effectiveProfile"`
+	Profiles             []webProfile         `json:"profiles"`
+	Rules                []webRule            `json:"rules"`
+	AutoSwitchEnabled    bool                 `json:"autoSwitchEnabled"`
+	ControllerEnabled    bool                 `json:"controllerEnabled"`
+	ControllerVisible    bool                 `json:"controllerVisible"`
+	AutoDebounceMs       int                  `json:"autoDebounceMs"`
+	AutoBindings         []webAutoBinding     `json:"autoBindings"`
+	AutoMatchedBindingID string               `json:"autoMatchedBindingId"`
+	AutoMatchedName      string               `json:"autoMatchedName"`
+	AutoMonitorStatus    string               `json:"autoMonitorStatus"`
+	AutoDecision         string               `json:"autoDecision"`
+	AutoDecisionDetail   string               `json:"autoDecisionDetail"`
+	AutoDecisionAt       string               `json:"autoDecisionAt"`
+	AutoLastSwitchAt     string               `json:"autoLastSwitchAt"`
+	ForegroundApp        webForegroundApp     `json:"foregroundApp"`
+	LastExternalApp      webForegroundApp     `json:"lastExternalApp"`
+	RecordingMode        string               `json:"recordingMode"`
+	RecordedText         string               `json:"recordedText"`
+	LastInput            string               `json:"lastInput"`
+	LastInputAt          string               `json:"lastInputAt"`
+	HookStatus           string               `json:"hookStatus"`
+	SelfElevated         bool                 `json:"selfElevated"`
+	MouseDeviceName      string               `json:"mouseDeviceName"`
+	MouseButtons         []MouseLogicalButton `json:"mouseButtons"`
 }
 
 func (a *App) startWebServer() error {
@@ -4578,11 +4789,16 @@ func (a *App) startWebServer() error {
 	mux.HandleFunc("/api/rule", a.webAPIRule)
 	mux.HandleFunc("/api/profile", a.webAPIProfile)
 	mux.HandleFunc("/api/autoswitch", a.webAPIAutoSwitch)
+	mux.HandleFunc("/api/running-apps", a.webAPIRunningApps)
+	mux.HandleFunc("/api/plugins", a.webAPIPlugins)
 	mux.HandleFunc("/api/controller", a.webAPIControllerFeature)
 	mux.HandleFunc("/api/joycon", a.webAPIJoyCon)
 	mux.HandleFunc("/joycon-ui.js", a.webJoyConUIJS)
 	mux.HandleFunc("/api/import-json", a.webAPIImportJSON)
 	mux.HandleFunc("/api/default-rules", a.webAPIDefaultRules)
+	if a.plugins != nil {
+		a.plugins.RegisterRoutes(mux, a)
+	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return err
@@ -4833,7 +5049,7 @@ func webForeground(info ForegroundAppInfo) webForegroundApp {
 	if !info.SeenAt.IsZero() {
 		seen = info.SeenAt.Format("15:04:05")
 	}
-	return webForegroundApp{PID: info.PID, ProcessName: info.ProcessName, Path: info.Path, Title: info.Title, Source: info.Source, SeenAt: seen}
+	return webForegroundApp{PID: info.PID, ProcessName: info.ProcessName, Path: info.Path, Title: info.Title, Source: info.Source, Elevated: info.Elevated, SeenAt: seen}
 }
 
 func (a *App) buildWebState() webState {
@@ -4905,6 +5121,7 @@ func (a *App) buildWebState() webState {
 	if !a.autoLastSwitchAt.IsZero() {
 		autoLastSwitchAt = a.autoLastSwitchAt.Format("15:04:05")
 	}
+	logicalButtons, mouseDevName := currentMouseLogicalButtons()
 	return webState{
 		Version:              appVersion,
 		ConfigPath:           a.configPath,
@@ -4940,6 +5157,9 @@ func (a *App) buildWebState() webState {
 		LastInput:            last,
 		LastInputAt:          lastAt,
 		HookStatus:           hook,
+		SelfElevated:         isCurrentProcessElevated(),
+		MouseDeviceName:      mouseDevName,
+		MouseButtons:         logicalButtons,
 	}
 }
 
@@ -4976,6 +5196,7 @@ func (a *App) webAPIAction(w http.ResponseWriter, r *http.Request) {
 		if a.enabled && !a.emergency {
 			a.enabled = false
 			a.abortAllLongPressLocked("conversion stopped", false)
+			a.releaseActiveHoldsLocked("conversion stopped")
 			a.clearJoyConInputStateLocked("conversion stopped")
 		} else {
 			a.enabled = true
@@ -5537,6 +5758,9 @@ func (a *App) webAPIAutoSwitch(w http.ResponseWriter, r *http.Request) {
 	case "add-captured":
 		err = a.webAddCapturedBinding(req.ProfileID)
 		message = "直前に使用していたアプリを登録しました。"
+	case "add-from-app":
+		err = a.webAddBindingFromApp(req)
+		message = "選択したアプリを自動切替ルールとして追加しました。"
 	case "add-empty":
 		err = a.webAddEmptyBinding(req.ProfileID)
 		message = "空の自動切替設定を追加しました。"

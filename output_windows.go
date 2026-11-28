@@ -51,25 +51,56 @@ func isJoyConHoldRule(rule Rule) bool {
 	return strings.EqualFold(rule.Mode, joyConRuleModeHold)
 }
 
+func isHoldableInputItem(item Item) bool {
+	if isControllerInputKind(item.Kind) {
+		return true
+	}
+	if strings.EqualFold(item.Kind, "Mouse") {
+		code := normMouse(item.Code)
+		// Allow side buttons (X1/X2); disallow primary Left/Right/Middle clicks and stateless wheel.
+		return code == "X1" || code == "X2"
+	}
+	if strings.EqualFold(item.Kind, "Key") {
+		_, ok := parseVK(item.Code)
+		return ok
+	}
+	return false
+}
+
+func isHoldableMouseOutputCode(code string) bool {
+	switch normMouse(code) {
+	case "Left", "Right", "Middle", "X1", "X2":
+		return true
+	default:
+		return false
+	}
+}
+
 func validateJoyConHoldRule(rule Rule) error {
 	if !isJoyConHoldRule(rule) {
 		return nil
 	}
 	if rule.LongPressEnabled {
-		return fmt.Errorf("Holdモードと長押しは同じ割り当てでは併用できません")
+		return fmt.Errorf("押し続け連動(Hold)モードと長押し分岐は同じ割り当てでは併用できません")
 	}
-	if len(rule.Input) != 1 || !isControllerInputKind(rule.Input[0].Kind) {
-		return fmt.Errorf("HoldモードはJoy-ConまたはXInputの単独入力にだけ設定できます")
+	if len(rule.Input) != 1 || !isHoldableInputItem(rule.Input[0]) {
+		return fmt.Errorf("押し続け連動(Hold)モードはサイドボタン・拡張ボタン・キー・コントローラーの単独入力に設定できます（左/右/中クリック単独やホイールは対象外）")
 	}
 	if len(rule.Output) == 0 {
-		return fmt.Errorf("Holdモードには保持するキーが必要です")
+		return fmt.Errorf("押し続け連動(Hold)モードには押し続けるキーまたはマウスボタンが必要です")
 	}
 	for _, item := range rule.Output {
-		if !strings.EqualFold(item.Kind, "Key") {
-			return fmt.Errorf("Holdモードの実行内容にはキーボードキーだけを指定してください")
-		}
-		if _, ok := parseVK(item.Code); !ok {
-			return fmt.Errorf("Holdモードに不明なキーがあります: %s", item.Code)
+		switch {
+		case strings.EqualFold(item.Kind, "Key"):
+			if _, ok := parseVK(item.Code); !ok {
+				return fmt.Errorf("Holdモードに不明なキーがあります: %s", item.Code)
+			}
+		case strings.EqualFold(item.Kind, "Mouse"):
+			if !isHoldableMouseOutputCode(item.Code) {
+				return fmt.Errorf("Holdモードの出力にホイールは指定できません（キーまたはマウスボタンを指定してください）: %s", item.Code)
+			}
+		default:
+			return fmt.Errorf("Holdモードの実行内容にはキーボードキーまたはマウスボタンを指定してください")
 		}
 	}
 	return nil
@@ -161,6 +192,17 @@ func (a *App) sendTapOutput(items []Item) {
 	for i := len(pressedByUs) - 1; i >= 0; i-- {
 		inputs = append(inputs, makeKeyInput(pressedByUs[i], true))
 	}
+	injectedCtrl := false
+	for _, vk := range pressedByUs {
+		if genericVK(vk) == VK_CONTROL {
+			injectedCtrl = true
+			break
+		}
+	}
+	if injectedCtrl {
+		a.injectingCtrl.Store(true)
+		defer a.injectingCtrl.Store(false)
+	}
 	if ok := a.callSendInput(inputs); !ok && len(pressedByUs) > 0 {
 		cleanup := make([]INPUT, 0, len(pressedByUs))
 		for i := len(pressedByUs) - 1; i >= 0; i-- {
@@ -172,18 +214,29 @@ func (a *App) sendTapOutput(items []Item) {
 
 func (a *App) sendJoyConHeldKeys(items []Item, down bool) {
 	keys := make([]uint32, 0, len(items))
+	mouseButtons := make([]string, 0, len(items))
+	seenKeys := make(map[uint32]bool)
+	seenMouse := make(map[string]bool)
 	for _, item := range items {
-		if !strings.EqualFold(item.Kind, "Key") {
-			continue
-		}
-		if vk, ok := parseVK(item.Code); ok {
-			if isModifier(vk) {
-				vk = normalizeModifier(vk)
+		if strings.EqualFold(item.Kind, "Key") {
+			if vk, ok := parseVK(item.Code); ok {
+				if isModifier(vk) {
+					vk = normalizeModifier(vk)
+				}
+				if !seenKeys[vk] {
+					seenKeys[vk] = true
+					keys = append(keys, vk)
+				}
 			}
-			keys = append(keys, vk)
+		} else if strings.EqualFold(item.Kind, "Mouse") {
+			code := normMouse(item.Code)
+			if isHoldableMouseOutputCode(code) && !seenMouse[code] {
+				seenMouse[code] = true
+				mouseButtons = append(mouseButtons, code)
+			}
 		}
 	}
-	if len(keys) == 0 {
+	if len(keys) == 0 && len(mouseButtons) == 0 {
 		return
 	}
 
@@ -192,10 +245,13 @@ func (a *App) sendJoyConHeldKeys(items []Item, down bool) {
 	if a.joyConOutputRefs == nil {
 		a.joyConOutputRefs = make(map[uint32]joyConOutputReference)
 	}
-	inputs := make([]INPUT, 0, len(keys))
-	for _, vk := range keys {
-		ref := a.joyConOutputRefs[vk]
-		if down {
+	if a.heldMouseRefs == nil {
+		a.heldMouseRefs = make(map[string]int)
+	}
+	inputs := make([]INPUT, 0, len(keys)+len(mouseButtons))
+	if down {
+		for _, vk := range keys {
+			ref := a.joyConOutputRefs[vk]
 			if ref.Count == 0 {
 				ref.Owned = !a.physicalKeyDown(vk)
 				if ref.Owned && !a.shuttingDown.Load() {
@@ -204,19 +260,50 @@ func (a *App) sendJoyConHeldKeys(items []Item, down bool) {
 			}
 			ref.Count++
 			a.joyConOutputRefs[vk] = ref
-			continue
 		}
-		if ref.Count == 0 {
-			continue
-		}
-		ref.Count--
-		if ref.Count == 0 {
-			delete(a.joyConOutputRefs, vk)
-			if joyConShouldReleaseOwnedKey(ref, a.physicalKeyDown(vk)) {
-				inputs = append(inputs, makeKeyInput(vk, true))
+		for _, btn := range mouseButtons {
+			cnt := a.heldMouseRefs[btn]
+			if cnt == 0 && !a.shuttingDown.Load() {
+				if inp, ok := mouseHoldInput(btn, true); ok {
+					inputs = append(inputs, inp)
+				}
 			}
-		} else {
-			a.joyConOutputRefs[vk] = ref
+			a.heldMouseRefs[btn] = cnt + 1
+		}
+	} else {
+		// Release in reverse order (mouse buttons, then non-modifier keys, then modifiers)
+		// so chords like Win+H release H before Win and avoid stray Start Menu opens.
+		for i := len(mouseButtons) - 1; i >= 0; i-- {
+			btn := mouseButtons[i]
+			cnt := a.heldMouseRefs[btn]
+			if cnt == 0 {
+				continue
+			}
+			cnt--
+			if cnt == 0 {
+				delete(a.heldMouseRefs, btn)
+				if inp, ok := mouseHoldInput(btn, false); ok {
+					inputs = append(inputs, inp)
+				}
+			} else {
+				a.heldMouseRefs[btn] = cnt
+			}
+		}
+		for i := len(keys) - 1; i >= 0; i-- {
+			vk := keys[i]
+			ref := a.joyConOutputRefs[vk]
+			if ref.Count == 0 {
+				continue
+			}
+			ref.Count--
+			if ref.Count == 0 {
+				delete(a.joyConOutputRefs, vk)
+				if joyConShouldReleaseOwnedKey(ref, a.physicalKeyDown(vk)) {
+					inputs = append(inputs, makeKeyInput(vk, true))
+				}
+			} else {
+				a.joyConOutputRefs[vk] = ref
+			}
 		}
 	}
 	a.callSendInput(inputs)
@@ -229,6 +316,14 @@ func (a *App) appendJoyConHeldReleaseInputs(inputs []INPUT) []INPUT {
 		}
 	}
 	clear(a.joyConOutputRefs)
+	for btn, cnt := range a.heldMouseRefs {
+		if cnt > 0 {
+			if inp, ok := mouseHoldInput(btn, false); ok {
+				inputs = append(inputs, inp)
+			}
+		}
+	}
+	clear(a.heldMouseRefs)
 	return inputs
 }
 
@@ -248,6 +343,38 @@ func (a *App) physicalKeyDown(vk uint32) bool {
 
 func wheelData(delta int32) uint32 {
 	return uint32(delta)
+}
+
+func mouseHoldInput(code string, down bool) (INPUT, bool) {
+	switch normMouse(code) {
+	case "Left":
+		if down {
+			return makeMouseInput(0, mouseEventLeftDown), true
+		}
+		return makeMouseInput(0, mouseEventLeftUp), true
+	case "Right":
+		if down {
+			return makeMouseInput(0, mouseEventRightDown), true
+		}
+		return makeMouseInput(0, mouseEventRightUp), true
+	case "Middle":
+		if down {
+			return makeMouseInput(0, mouseEventMiddleDown), true
+		}
+		return makeMouseInput(0, mouseEventMiddleUp), true
+	case "X1":
+		if down {
+			return makeMouseInput(1, mouseEventXDown), true
+		}
+		return makeMouseInput(1, mouseEventXUp), true
+	case "X2":
+		if down {
+			return makeMouseInput(2, mouseEventXDown), true
+		}
+		return makeMouseInput(2, mouseEventXUp), true
+	default:
+		return INPUT{}, false
+	}
 }
 
 func mouseTapInputs(code string) ([]INPUT, bool) {

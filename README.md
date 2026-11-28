@@ -1,13 +1,27 @@
 # MouseButtonMapper
 
-Windows向けのGUI-first入力リマッパーです。AutoHotkeyの全機能を追うのではなく、マウス／キーボードの割り当てを少ない操作で確実に作れることを中核にします。必要な場合だけJoy-Con（L）、Switch互換Raw HID、XInputコントローラーを実験機能として追加できます。
+Windows向けのGUI-first入力リマッパーです。AutoHotkeyの全機能を追うのではなく、マウス／キーボードの割り当てを少ない操作で確実に作れることを中核にします。プラグイン形式で対応マウスのオンボード設定（**Ray Pawn+ / RM-3360LR 等の SinoWealth 系マウス**）にも対応し、必要な場合だけJoy-Con（L）、Switch互換Raw HID、XInputコントローラーを実験機能として追加できます。
+
+## Ray Pawn+ (RM-3360LR) の公式ソフトが入手できず困っている方へ
+
+ゲーミングマウス **Ray Pawn+（RM-3360LR / SINOWEALTH Wired Gaming Mouse / VID 258A / PID 1007 / FW GM07 / PMW3360）** は、公式クライアントの配布サーバーが閉鎖されてダウンロードできなくなっています。
+
+MouseButtonMapper には実機 HID 解析に基づく **Ray Pawn+ / SinoWealth 専用プラグイン** を同梱しており、**公式ソフトなしで** 以下を安全に設定できます。
+
+- 全 9 ボタンのオンボード設定書き換え（右サイドの `PageUp/PageDown` 変更・`DPI±` のカスタムボタン化）
+- Windows 11 の隠しショートカット（`Win + F16` シャットダウン等）と衝突しない **`F13 / F18 / F19 / F20` ワンクリック最適化**
+- DPI 設定（100〜12,000 DPI・不要スロット削除）・ポーリングレート（125〜1000 Hz）・LED 単色 / 消灯 / 色変更
+- 起動中アプリ・ゲームに応じた **プロファイル自動切替 ＋ マウス本体の LED 色・DPI 連動**
+- 初回読み込み時の **自動バックアップ** と **ワンクリック工場出荷復元**
+
+詳しい手順・対応確認・USB HID プロトコル仕様は [**Ray Pawn+ (RM-3360LR) 非公式設定ガイド (`docs/RAY_PAWN_PLUS_GUIDE.md`)**](docs/RAY_PAWN_PLUS_GUIDE.md) をご覧ください。
 
 ## 現在の配布候補
 
-- バージョン: **8.4.0-rc5**
+- バージョン: **8.5.0-rc1**（`8.4.0-rc5` ベース）
 - 対象: Windows x64
 - 安定版: `main`の8.3.0
-- 開発版: Draft PR #5の実機検証用RC
+- 開発版: プラグイン機能（Ray Pawn+ / SinoWealth 対応）・GUI 刷新・Hold モード・論理サイドボタン認識を含む RC
 - 設定保存先: `%LOCALAPPDATA%\MouseButtonMapper\config.json`
 
 ## 重要: コントローラー機能は初期状態で非表示・OFF
@@ -29,12 +43,13 @@ BetterJoyやJoyToKeyへコントローラー処理を任せる場合は、全体
 
 ## 主な機能
 
-- 多ボタンマウス、ホイール、キーボードの割り当て
+- 多ボタンマウス、ホイール、キーボードの割り当て（認識済みマウスの `左サイド1/2`・`右サイド1/2`・`DPI+ボタン`・`DPI-ボタン` 表示対応）
 - 出力先としてキー、左／右／中クリック、サイド1／2、ホイール上下を同じルールで使用
 - 出力の物理記録と、GUIのクイック追加ボタンによるマウス操作登録
-- 短押し／長押し分岐、長押し時の別操作、短押しキャンセル
+- 短押し／長押し分岐、長押し時の別操作、短押しキャンセル、**押し続け連動（Hold）モード**
 - 入力／実行内容の記録と、全入力UP時の自動確定
-- 複数プロファイル、前面アプリ連動の自動切替
+- 複数プロファイル、前面アプリ連動の自動切替（起動中アプリピッカー・管理者権限 UIPI 警告付き）
+- プラグイン機構による対応マウス本体設定（**Ray Pawn+ / RM-3360LR / SinoWealth 258A:1007** のオンボードボタン・DPI・ポーリングレート・LED 色・プロファイル連動）
 - 低レベルフック専用スレッド、出力ワーカー、フック監視
 - 多重起動拒否
 - 緊急停止: `Ctrl + Alt + Shift + F12`
@@ -68,10 +83,10 @@ UI改修時は次の設計資料を参照します。
 
 Draft PRと作業ブランチのCIは、同一headから次を生成します。
 
-- `MouseButtonMapper-v8.4.0-rc5.exe`
-- `MouseButtonMapper-v8.4.0-rc5-windows-x64.zip`
-- `MouseButtonMapper-v8.4.0-rc5-source.zip`
-- `MouseButtonMapper-v8.4.0-rc5-SHA256SUMS.txt`
+- `MouseButtonMapper-v8.5.0-rc1.exe`
+- `MouseButtonMapper-v8.5.0-rc1-windows-x64.zip`
+- `MouseButtonMapper-v8.5.0-rc1-source.zip`
+- `MouseButtonMapper-v8.5.0-rc1-SHA256SUMS.txt`
 
 ## ローカル検証
 
@@ -90,7 +105,8 @@ go build -trimpath -ldflags="-s -w -H=windowsgui" -o MouseButtonMapper.exe .
 2. [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 3. [`docs/REGRESSION_CHECKLIST.md`](docs/REGRESSION_CHECKLIST.md)
 4. [`docs/RELEASE.md`](docs/RELEASE.md)
-5. [`CONTRIBUTING.md`](CONTRIBUTING.md)
+5. [`docs/RAY_PAWN_PLUS_GUIDE.md`](docs/RAY_PAWN_PLUS_GUIDE.md)
+6. [`CONTRIBUTING.md`](CONTRIBUTING.md)
 
 ## ライセンス
 

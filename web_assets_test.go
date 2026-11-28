@@ -26,6 +26,7 @@ func TestWebUIRequiredControlsExistOnce(t *testing.T) {
 		"bindingRows",
 		"saveBinding",
 		"ruleRows",
+		"ruleMode",
 		"saveRule",
 		"recordInput",
 		"recordOutput",
@@ -56,7 +57,7 @@ func TestWebUIDoesNotContainDuplicateIDs(t *testing.T) {
 }
 
 func TestWebUIExposesMouseOutputShortcuts(t *testing.T) {
-	for _, token := range []string{"左クリック", "右クリック", "中クリック", "サイド1", "サイド2", "ホイール上", "ホイール下"} {
+	for _, token := range []string{"左クリック", "右クリック", "中クリック", "左サイド1", "左サイド2", "ホイール上", "ホイール下"} {
 		needle := `data-output-token="` + token + `"`
 		if count := strings.Count(webHTML, needle); count != 2 {
 			t.Fatalf("output shortcut %q occurs %d times, want 2 (short/long output)", token, count)

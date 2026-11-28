@@ -25,7 +25,7 @@ window.fetch=async function(input,init){
     try{
       const body=JSON.parse(init.body);
       const mode=byId('joyRuleMode');
-      if(body&&body.op==='save'&&mode)body.mode=mode.value;
+      if(body&&body.op==='save'&&mode&&!body.mode)body.mode=mode.value;
       nextInit=Object.assign({},init,{body:JSON.stringify(body)});
     }catch(_e){}
   }
@@ -134,7 +134,7 @@ function injectVisiblePanels(){
 }
 
 function injectRuleMode(){
-  if(byId('joyRuleMode'))return;
+  if(byId('ruleMode')||byId('joyRuleMode'))return;
   const input=byId('ruleInput');
   const output=byId('ruleOutput');
   if(!input||!output)return;
