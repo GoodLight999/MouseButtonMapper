@@ -640,6 +640,7 @@ type App struct {
 	outputDropped           atomic.Uint64
 	rehookPending           atomic.Bool
 	shuttingDown            atomic.Bool
+	injectingCtrl           atomic.Bool
 	hwnd                    uintptr
 	ctrlList                uintptr
 	ctrlStatus              uintptr
@@ -1916,6 +1917,18 @@ func getLastInputTick() (uint32, bool) {
 	return li.DwTime, r != 0
 }
 
+func (a *App) hasAnyMouseDown() bool {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return len(a.mouseDown) > 0
+}
+
+func (a *App) isForegroundElevatedCached() bool {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.foregroundApp.Elevated
+}
+
 func (a *App) hookWatchdog() {
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
@@ -1925,6 +1938,8 @@ func (a *App) hookWatchdog() {
 	var lastCursor POINT
 	pGetCursorPos.Call(uintptr(unsafe.Pointer(&lastCursor)))
 	lastRequest := time.Time{}
+	lastUIPIAt := time.Time{}
+	consecutiveMissing := 0
 	for {
 		select {
 		case <-a.hookDone:
@@ -1936,6 +1951,7 @@ func (a *App) hookWatchdog() {
 		a.hookMu.RUnlock()
 		if (mh == 0 || kh == 0) && time.Since(lastRequest) > 5*time.Second {
 			lastRequest = time.Now()
+			consecutiveMissing = 0
 			a.requestHookReinstall("hook handle is zero")
 		}
 
@@ -1944,26 +1960,46 @@ func (a *App) hookWatchdog() {
 		curMouseSeq := a.mouseEventSeq.Load()
 		var curCursor POINT
 		pGetCursorPos.Call(uintptr(unsafe.Pointer(&curCursor)))
+
+		if isUIPIBlockingHook(curCursor) || a.isForegroundElevatedCached() {
+			lastUIPIAt = time.Now()
+			consecutiveMissing = 0
+			lastInput = curInput
+			lastAnySeq = curAnySeq
+			lastMouseSeq = curMouseSeq
+			lastCursor = curCursor
+			continue
+		}
+
 		cursorMoved := curCursor != lastCursor
 		missingAll := ok && curInput != lastInput && curAnySeq == lastAnySeq
 		missingMouse := cursorMoved && curMouseSeq == lastMouseSeq
-		if (missingAll || missingMouse) && time.Since(lastRequest) > 5*time.Second {
-			// Skip false rehooks when Windows UIPI intentionally withholds callbacks
-			// over an elevated foreground/hovered window (e.g. Voicemeeter, Task Manager).
-			if !isUIPIBlockingHook(curCursor) {
-				// OS側では入力またはカーソル移動が進んだのに、当該フックのコールバックが進んでいない。
-				// タイムアウトによる無言解除を短く再確認してから再フックする。
-				time.Sleep(80 * time.Millisecond)
-				stillMissingAll := missingAll && a.hookEventSeq.Load() == curAnySeq
-				stillMissingMouse := missingMouse && a.mouseEventSeq.Load() == curMouseSeq
-				if (stillMissingAll || stillMissingMouse) && !isUIPIBlockingHook(curCursor) {
-					lastRequest = time.Now()
-					reason := "system input advanced but hook callbacks did not"
-					if stillMissingMouse {
-						reason = "cursor moved but mouse hook callback did not"
-					}
-					a.requestHookReinstall(reason)
+		if missingAll || missingMouse {
+			if time.Since(lastUIPIAt) < 4*time.Second || a.hasAnyMouseDown() {
+				// Recent elevated window (e.g. Voicemeeter during Virtual Desktop switch)
+				// or active mouse chord: reset baseline and never falsely rehook.
+				consecutiveMissing = 0
+			} else {
+				consecutiveMissing++
+			}
+		} else {
+			consecutiveMissing = 0
+		}
+
+		if consecutiveMissing >= 2 && time.Since(lastRequest) > 5*time.Second {
+			// OS側では非UIPI環境で2秒連続して入力またはカーソル移動が進んだのに、
+			// 当該フックのコールバックが進んでいない。短く再確認してから再フックする。
+			time.Sleep(80 * time.Millisecond)
+			stillMissingAll := missingAll && a.hookEventSeq.Load() == curAnySeq
+			stillMissingMouse := missingMouse && a.mouseEventSeq.Load() == curMouseSeq
+			if (stillMissingAll || stillMissingMouse) && !isUIPIBlockingHook(curCursor) && !a.hasAnyMouseDown() {
+				lastRequest = time.Now()
+				consecutiveMissing = 0
+				reason := "system input advanced but hook callbacks did not"
+				if stillMissingMouse {
+					reason = "cursor moved but mouse hook callback did not"
 				}
+				a.requestHookReinstall(reason)
 			}
 		}
 		lastInput = curInput
@@ -2465,6 +2501,11 @@ func (a *App) wheel(dir string) bool {
 			return rule.SuppressTrigger
 		}
 		return false
+	}
+	// Prevent a stray hardware wheel notch from combining with an in-flight injected Ctrl
+	// (e.g. during rapid X2+Wheel Virtual Desktop switching, which otherwise resizes Desktop icons).
+	if a.injectingCtrl.Load() {
+		return true
 	}
 	return false
 }

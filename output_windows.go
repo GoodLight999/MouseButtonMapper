@@ -192,6 +192,17 @@ func (a *App) sendTapOutput(items []Item) {
 	for i := len(pressedByUs) - 1; i >= 0; i-- {
 		inputs = append(inputs, makeKeyInput(pressedByUs[i], true))
 	}
+	injectedCtrl := false
+	for _, vk := range pressedByUs {
+		if genericVK(vk) == VK_CONTROL {
+			injectedCtrl = true
+			break
+		}
+	}
+	if injectedCtrl {
+		a.injectingCtrl.Store(true)
+		defer a.injectingCtrl.Store(false)
+	}
 	if ok := a.callSendInput(inputs); !ok && len(pressedByUs) > 0 {
 		cleanup := make([]INPUT, 0, len(pressedByUs))
 		for i := len(pressedByUs) - 1; i >= 0; i-- {
