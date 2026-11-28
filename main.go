@@ -1587,13 +1587,21 @@ func asyncKeyDown(vk uint32) bool {
 // a boundary check so one stale map entry cannot block automatic switching
 // forever.
 func (a *App) reconcilePhysicalStateLocked() {
+	now := time.Now()
 	for btn := range a.mouseDown {
 		trig := Item{Kind: "Mouse", Code: btn}
 		lpKey := longPressKey(trig)
-		// Buttons suppressed by WH_MOUSE_LL do not set GetAsyncKeyState's high bit.
-		// Never treat an active Hold or LongPress button as missed-UP based on GetAsyncKeyState.
+		// Buttons suppressed by WH_MOUSE_LL (Hold, LongPress, or chord prefixes like X1/X2)
+		// never set GetAsyncKeyState's high bit. Do not evict them based on GetAsyncKeyState,
+		// otherwise a foreground change (such as switching Virtual Desktops while holding X2)
+		// drops mouseDown mid-chord and prevents scrolling back.
 		if a.hasActiveHoldLocked(trig) || a.longPress[lpKey] != nil {
 			continue
+		}
+		if a.suppressedDown[btn] || a.pendingTap[btn] || a.consumedPrefix[btn] {
+			if downAt, ok := a.mouseDownAt[btn]; !ok || now.Sub(downAt) < 15*time.Second {
+				continue
+			}
 		}
 		if !asyncKeyDown(mouseButtonVK(btn)) {
 			a.abortLongPressForTriggerLocked(trig, "missed mouse-up repaired")
@@ -1611,10 +1619,10 @@ func (a *App) reconcilePhysicalStateLocked() {
 		}
 		trig := Item{Kind: "Key", Code: strconv.Itoa(int(vk))}
 		lpKey := longPressKey(trig)
-		// Keys suppressed by WH_KEYBOARD_LL (e.g. F13..F24 mapped to Hold/LongPress)
+		// Keys suppressed by WH_KEYBOARD_LL (e.g. F13..F24 mapped to Hold/LongPress/Tap)
 		// are never reported as down by GetAsyncKeyState. Do not evict them mid-hold,
 		// otherwise the next OS key-repeat would re-fire HoldDown and leak stuck modifiers.
-		if a.hasActiveHoldLocked(trig) || a.longPress[lpKey] != nil {
+		if a.hasActiveHoldLocked(trig) || a.longPress[lpKey] != nil || a.suppressedKeyDown[vk] {
 			continue
 		}
 		if !asyncKeyDown(vk) {
@@ -1940,18 +1948,22 @@ func (a *App) hookWatchdog() {
 		missingAll := ok && curInput != lastInput && curAnySeq == lastAnySeq
 		missingMouse := cursorMoved && curMouseSeq == lastMouseSeq
 		if (missingAll || missingMouse) && time.Since(lastRequest) > 5*time.Second {
-			// OS側では入力またはカーソル移動が進んだのに、当該フックのコールバックが進んでいない。
-			// タイムアウトによる無言解除を短く再確認してから再フックする。
-			time.Sleep(80 * time.Millisecond)
-			stillMissingAll := missingAll && a.hookEventSeq.Load() == curAnySeq
-			stillMissingMouse := missingMouse && a.mouseEventSeq.Load() == curMouseSeq
-			if stillMissingAll || stillMissingMouse {
-				lastRequest = time.Now()
-				reason := "system input advanced but hook callbacks did not"
-				if stillMissingMouse {
-					reason = "cursor moved but mouse hook callback did not"
+			// Skip false rehooks when Windows UIPI intentionally withholds callbacks
+			// over an elevated foreground/hovered window (e.g. Voicemeeter, Task Manager).
+			if !isUIPIBlockingHook(curCursor) {
+				// OS側では入力またはカーソル移動が進んだのに、当該フックのコールバックが進んでいない。
+				// タイムアウトによる無言解除を短く再確認してから再フックする。
+				time.Sleep(80 * time.Millisecond)
+				stillMissingAll := missingAll && a.hookEventSeq.Load() == curAnySeq
+				stillMissingMouse := missingMouse && a.mouseEventSeq.Load() == curMouseSeq
+				if (stillMissingAll || stillMissingMouse) && !isUIPIBlockingHook(curCursor) {
+					lastRequest = time.Now()
+					reason := "system input advanced but hook callbacks did not"
+					if stillMissingMouse {
+						reason = "cursor moved but mouse hook callback did not"
+					}
+					a.requestHookReinstall(reason)
 				}
-				a.requestHookReinstall(reason)
 			}
 		}
 		lastInput = curInput

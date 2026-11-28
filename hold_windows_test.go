@@ -207,3 +207,71 @@ func TestTapKeyRuleSuppressesRepeatAndKeyUp(t *testing.T) {
 		t.Fatal("Tap key up must stay suppressed")
 	}
 }
+
+func TestSuppressedMouseChordPrefixSurvivesReconcileAcrossVirtualDesktopSwitch(t *testing.T) {
+	rules := []Rule{
+		{
+			Enabled:         true,
+			Input:           []Item{{Kind: "Mouse", Code: "X2"}},
+			Mode:            "Tap",
+			Output:          []Item{{Kind: "Key", Code: "17"}, {Kind: "Key", Code: "67"}}, // Ctrl+C
+			SuppressTrigger: true,
+		},
+		{
+			Enabled:         true,
+			Input:           []Item{{Kind: "Mouse", Code: "X2"}, {Kind: "Mouse", Code: "WheelDown"}},
+			Mode:            "Tap",
+			Output:          []Item{{Kind: "Key", Code: "17"}, {Kind: "Key", Code: "91"}, {Kind: "Key", Code: "39"}}, // Ctrl+Win+Right
+			SuppressTrigger: true,
+			SuppressPrefix:  true,
+		},
+		{
+			Enabled:         true,
+			Input:           []Item{{Kind: "Mouse", Code: "X2"}, {Kind: "Mouse", Code: "WheelUp"}},
+			Mode:            "Tap",
+			Output:          []Item{{Kind: "Key", Code: "17"}, {Kind: "Key", Code: "91"}, {Kind: "Key", Code: "37"}}, // Ctrl+Win+Left
+			SuppressTrigger: true,
+			SuppressPrefix:  true,
+		},
+	}
+	a := newHoldTestApp(rules)
+
+	// Hold X2 and scroll down to switch Virtual Desktop.
+	if !a.buttonDown("X2") {
+		t.Fatal("X2 down should be suppressed")
+	}
+	if !a.wheel("WheelDown") {
+		t.Fatal("X2+WheelDown should match and suppress wheel")
+	}
+	if job := <-a.actionCh; job.Rule.Output[2].Code != "39" {
+		t.Fatalf("expected WheelDown rule (Right=39), got %+v", job.Rule.Output)
+	}
+
+	// Simulate foreground change on the destination desktop triggering reconcilePhysicalStateLocked.
+	// GetAsyncKeyState(VK_XBUTTON2) is 0 because X2 was suppressed by WH_MOUSE_LL; X2 must stay held.
+	a.mu.Lock()
+	a.reconcilePhysicalStateLocked()
+	stillDown := a.mouseDown["X2"]
+	a.mu.Unlock()
+	if !stillDown {
+		t.Fatal("reconcilePhysicalStateLocked dropped suppressed X2 mid-chord")
+	}
+
+	// Scrolling back up while still holding X2 must immediately fire X2+WheelUp.
+	if !a.wheel("WheelUp") {
+		t.Fatal("X2+WheelUp should still match while holding X2 after desktop switch")
+	}
+	if job := <-a.actionCh; job.Rule.Output[2].Code != "37" {
+		t.Fatalf("expected WheelUp rule (Left=37), got %+v", job.Rule.Output)
+	}
+
+	// Releasing X2 after chord consumption must not fire single-tap Ctrl+C.
+	if !a.buttonUp("X2") {
+		t.Fatal("X2 up should stay suppressed after chord")
+	}
+	select {
+	case extra := <-a.actionCh:
+		t.Fatalf("unexpected single-tap output after chord release: %+v", extra.Rule.Output)
+	default:
+	}
+}

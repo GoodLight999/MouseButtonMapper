@@ -21,6 +21,7 @@ var (
 	asIsWindowVisible     = asUser32.NewProc("IsWindowVisible")
 	asGetWindowLongPtrW   = asUser32.NewProc("GetWindowLongPtrW")
 	asGetShellWindow      = asUser32.NewProc("GetShellWindow")
+	asWindowFromPoint     = asUser32.NewProc("WindowFromPoint")
 	asOpenProcessToken    = asAdvapi32.NewProc("OpenProcessToken")
 	asGetTokenInformation = asAdvapi32.NewProc("GetTokenInformation")
 	asGetCurrentProcess   = asKernel32.NewProc("GetCurrentProcess")
@@ -90,6 +91,37 @@ func isProcessElevated(pid uint32) bool {
 	var retLen uint32
 	r, _, _ = asGetTokenInformation.Call(tok, tokenElevation, uintptr(unsafe.Pointer(&elev)), unsafe.Sizeof(elev), uintptr(unsafe.Pointer(&retLen)))
 	return r != 0 && elev != 0
+}
+
+// isUIPIBlockingHook reports whether Windows UIPI is expected to withhold low-level
+// hook callbacks for the current foreground or cursor-hovered window (e.g. elevated
+// apps like Voicemeeter, Task Manager, PowerToys, or UAC/lock transitions).
+// In those cases the hook is still healthy and hookWatchdog must not falsely rehook
+// (which would wipe held mouse chord states and reorder hooks relative to other tools).
+func isUIPIBlockingHook(cursor POINT) bool {
+	if isCurrentProcessElevated() {
+		return false
+	}
+	fg, _, _ := pGetForegroundWindow.Call()
+	if fg == 0 {
+		return true
+	}
+	var fgPID uint32
+	pGetWindowThreadProcessId.Call(fg, uintptr(unsafe.Pointer(&fgPID)))
+	if fgPID != 0 && isProcessElevated(fgPID) {
+		return true
+	}
+	// On x64 Windows, POINT (two int32s) is passed packed into a single 64-bit register.
+	packedPt := uintptr(uint64(uint32(cursor.X)) | (uint64(uint32(cursor.Y)) << 32))
+	ptHwnd, _, _ := asWindowFromPoint.Call(packedPt)
+	if ptHwnd != 0 && ptHwnd != fg {
+		var ptPID uint32
+		pGetWindowThreadProcessId.Call(ptHwnd, uintptr(unsafe.Pointer(&ptPID)))
+		if ptPID != 0 && ptPID != fgPID && isProcessElevated(ptPID) {
+			return true
+		}
+	}
+	return false
 }
 
 func listRunningApps(selfPID uint32) []RunningAppEntry {
